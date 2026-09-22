@@ -12,7 +12,7 @@ const DEFAULTS = {
     'http://wifi.vivo.com.cn/generate_204',
     'https://www.baidu.com/favicon.ico'
   ].join('\n'),
-  schedule: { enabled: true, times: '08:00,12:30,18:00', intervalDays: 1 },
+  schedule: { enabled: true, times: '08:00', intervalDays: 1 },
   loginOnStartup: true,
   catchUpOnStartup: true,
   probeBeforeLogin: false,
@@ -63,7 +63,7 @@ function load(cfg) {
   $('checkUrls').value = cfg.checkUrls || DEFAULTS.checkUrls;
   $('excludeHosts').value = cfg.excludeHosts || DEFAULTS.excludeHosts;
   $('scheduleEnabled').checked = !!(cfg.schedule || {}).enabled;
-  $('scheduleTimes').value = (cfg.schedule || {}).times || DEFAULTS.schedule.times;
+  $('scheduleTimes').value = firstTime((cfg.schedule || {}).times) || DEFAULTS.schedule.times;
   $('intervalDays').value = Number((cfg.schedule || {}).intervalDays) || 1;
   $('waitAfterSubmitSeconds').value = cfg.waitAfterSubmitSeconds;
   $('maxAttempts').value = cfg.maxAttempts;
@@ -97,6 +97,17 @@ function normalizeTimes(text) {
       if (!out.includes(v)) out.push(v);
     });
   return out.join(',');
+}
+
+/* 时间输入框（type="time"）只认一个时间。老配置里可能存着多个时间点，
+   这里取第一个，免得打开设置页时输入框变空。 */
+function firstTime(text) {
+  const m = String(text || '').match(/(\d{1,2})[:：](\d{1,2})/);
+  if (!m) return '';
+  const h = Number(m[1]);
+  const mi = Number(m[2]);
+  if (h > 23 || mi > 59) return '';
+  return String(h).padStart(2, '0') + ':' + String(mi).padStart(2, '0');
 }
 
 function collect() {
@@ -151,12 +162,12 @@ function flash(text, ms) {
 async function save() {
   const cfg = collect();
   if (cfg.schedule.enabled && !cfg.schedule.times) {
-    alert('定时认证已启用，但时间点没填对。请按 08:00,12:30 这种格式填写。');
+    alert('定时认证已启用，但时间点没填对。请填一个 24 小时制时间，例如 08:00。');
     $('scheduleTimes').focus();
     return null;
   }
   await chrome.storage.local.set({ config: cfg, state: { retry: null } });
-  $('scheduleTimes').value = cfg.schedule.times;
+  $('scheduleTimes').value = firstTime(cfg.schedule.times);
   flash('已保存 ' + new Date().toLocaleTimeString());
   return cfg;
 }

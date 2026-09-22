@@ -30,9 +30,9 @@
       <h2>定时认证</h2>
       <label class="check"><input id="scheduleEnabled" type="checkbox" /> 启用定时认证</label>
       <div class="field">
-        <label for="scheduleTimes">认证时间点（24 小时制，逗号分隔）</label>
-        <input id="scheduleTimes" type="text" spellcheck="false" placeholder="08:00,12:30,18:00" />
-        <p class="hint">到点自动认证，循环执行。建议写上课前、午休后、晚自习这类你需要用网的时刻，2～4 个就够。</p>
+        <label for="scheduleTimes">认证时间点（24 小时制）</label>
+        <input id="scheduleTimes" type="time" value="08:00" />
+        <p class="hint">每天到这个点自动认证一次，默认早上 8 点。</p>
       </div>
       <div class="field">
         <label for="intervalDays">认证周期（天）</label>

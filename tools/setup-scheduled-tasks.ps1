@@ -8,7 +8,7 @@
 #    powershell -ExecutionPolicy Bypass -File setup-scheduled-tasks.ps1
 #
 #  Options:
-#    -Times "08:00,12:30,18:00"   time points, comma separated
+#    -Times "08:00"               time point (default 08:00; several allowed, comma separated)
 #    -Url   "http://10.0.0.55/srun_portal_pc?ac_id=1"   trigger URL
 #    -Wake                        wake the PC to run the task
 #    -Remove                      delete previously created tasks
@@ -16,7 +16,7 @@
 # ============================================================
 
 param(
-    [string]$Times = "08:00,12:30,18:00",
+    [string]$Times = "08:00",
     [string]$Url = "http://connectivitycheck.platform.hicloud.com/generate_204",
     [string]$Prefix = "CampusNetLogin",
     [switch]$Wake,
@@ -67,7 +67,7 @@ foreach ($part in ($Times -split "[,;\s]+")) {
 }
 
 if ($list.Count -eq 0) {
-    Write-Host "[ERROR] no valid time point. Example: -Times ""08:00,12:30"""
+    Write-Host "[ERROR] no valid time point. Example: -Times ""08:00"""
     exit 1
 }
 

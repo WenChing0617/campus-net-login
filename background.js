@@ -50,7 +50,7 @@ const DEFAULT_CONFIG = {
    *   1 = 每天（默认）—— 一天里填的几个时间点都会跑；
    *   N > 1 = 每隔 N 天认证一次 —— 上次认证之后，中间 N-1 天直接跳过，
    *           到第 N 天的时间点才再跑。给那些「认证一次能撑好几天」的运营商用。 */
-  schedule: { enabled: true, times: '08:00,12:30,18:00', intervalDays: 1 },
+  schedule: { enabled: true, times: '08:00', intervalDays: 1 },
   loginOnStartup: true,
   catchUpOnStartup: true,
   probeBeforeLogin: false,
@@ -321,7 +321,7 @@ async function scheduleNext() {
   const times = parseTimes(cfg.schedule.times);
   if (!times.length) {
     await setState({ nextRunAt: 0 });
-    await note('定时时间格式不对，请按 08:00,12:30 这样填写');
+    await note('定时时间格式不对，请按 08:00 这样填写');
     return 0;
   }
   const st = await getState();
