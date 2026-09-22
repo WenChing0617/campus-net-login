@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>校园网自动登录</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <span class="dot" id="dot"></span>
+        <h1>校园网自动登录</h1>
+      </div>
+      <span class="pill" id="pill">读取中…</span>
+    </header>
+
+    <div class="rows">
+      <div class="row"><span>账号</span><b id="user">—</b></div>
+      <div class="row"><span>定时认证</span><b id="schedule">—</b></div>
+      <div class="row"><span>下次认证</span><b id="nextRun">—</b></div>
+      <div class="row"><span>上次成功</span><b id="loginAt">—</b></div>
+      <div class="row"><span>上次检测</span><b id="checkAt">—</b></div>
+    </div>
+
+    <p class="msg" id="msg">—</p>
+    <p class="msg sub" id="checkInfo">—</p>
+    <pre class="diag" id="diag" hidden title="点击可复制诊断信息"></pre>
+
+    <div class="grid">
+      <button id="btnLogin" class="primary">立即认证</button>
+      <button id="btnOpen">打开认证页</button>
+      <button id="btnCheck">检测网络</button>
+      <button id="btnPause">暂停定时</button>
+      <button id="btnOptions">打开设置</button>
+    </div>
+    <p class="foot">「打开认证页」= 手动打开门户那条路，任何时候都能用；页面一出来就会自己填。非认证时段后台完全休眠。</p>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

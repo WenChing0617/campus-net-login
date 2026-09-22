@@ -1,0 +1,18 @@
+# 历史回归留档：里面带个人账号 / 内网 IP / 学校域名，不进公开仓库
+test/regress-*
+
+# 测试运行结果（每次跑都会变，不必入仓）
+test/result.txt
+test/background-result.txt
+test/gate-check-result.txt
+
+# 门户探测产物
+tools/probe-out/
+
+# 打包产物与本地备份
+*.zip
+_bak-*/
+
+# 系统文件
+.DS_Store
+Thumbs.db

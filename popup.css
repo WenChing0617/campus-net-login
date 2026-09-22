@@ -1,0 +1,202 @@
+:root {
+  --bg: #ffffff;
+  --panel: #f6f6f4;
+  --text: #24292f;
+  --muted: #6b7280;
+  --line: rgba(0, 0, 0, 0.12);
+  --blue: #2563eb;
+  --blue-soft: #e6f1fb;
+  --red: #e24b4a;
+  --green: #1d9e75;
+  --gray: #888780;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1f1f1e;
+    --panel: #2c2c2a;
+    --text: #f1efe8;
+    --muted: #a8a6a0;
+    --line: rgba(255, 255, 255, 0.16);
+    --blue: #85b7eb;
+    --blue-soft: #0c447c;
+    --red: #f09595;
+    --green: #5dcaa5;
+    --gray: #b4b2a9;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 330px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.wrap {
+  padding: 14px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--gray);
+  flex: none;
+}
+
+.dot.on {
+  background: var(--green);
+}
+
+.dot.off {
+  background: var(--red);
+}
+
+h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.pill {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  white-space: nowrap;
+}
+
+.rows {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row span {
+  color: var(--muted);
+  font-size: 12px;
+  flex: none;
+}
+
+.row b {
+  font-weight: 400;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  min-height: 34px;
+}
+
+/* 探测结论：比主消息小一号、淡一点，但一直显示，方便定位「凭什么说已联网」 */
+.msg.sub {
+  margin: -4px 0 10px;
+  padding: 6px 10px;
+  min-height: 0;
+  background: transparent;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.diag {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  font: 11px/1.5 ui-monospace, Consolas, "Microsoft YaHei", monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 96px;
+  overflow: auto;
+  cursor: pointer;
+  user-select: text;
+}
+
+button {
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--muted);
+}
+
+button.primary {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+
+button.primary:hover {
+  opacity: 0.92;
+}
+
+@media (prefers-color-scheme: dark) {
+  button.primary {
+    color: #10161d;
+  }
+}
+
+.foot {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
