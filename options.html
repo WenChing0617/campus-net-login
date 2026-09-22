@@ -8,13 +8,13 @@
 <body>
   <main>
     <h1>校园网自动登录 · 设置</h1>
-    <p class="lead">扩展平时完全休眠，只在「设定时间点」「浏览器启动时」「打开认证页时」三个时机动作，不做实时轮询。</p>
+    <p class="lead">平时完全休眠，只在设定时间点、浏览器启动、打开认证页这三种时机动作，不做轮询。</p>
 
     <section>
       <h2>账号</h2>
       <div class="field">
         <label for="username">账号 / 学号</label>
-        <input id="username" type="text" autocomplete="off" placeholder="例如 20240001" />
+        <input id="username" type="text" autocomplete="off" placeholder="例如 3230000001" />
       </div>
       <div class="field">
         <label for="password">密码</label>
@@ -37,12 +37,12 @@
       <div class="field">
         <label for="intervalDays">认证周期（天）</label>
         <input id="intervalDays" type="number" min="1" max="30" />
-        <p class="hint"><b>1 = 每天</b>（默认）：上面那几个时间点每天都跑一遍。<br /><b>填 N（&gt;1）就是每 N 天认证一次</b>：上次认证之后，中间 N-1 天直接跳过，到第 N 天的时间点才再跑 —— 给「认证一次能撑好几天」的运营商（移动 / 联通这类）用。<br />手动点「保存并立即认证一次」和「打开认证页」<b>不受这个周期限制</b>，随时都能触发。</p>
+        <p class="hint"><b>1 = 每天</b>（默认）：上面几个时间点每天都跑。<b>填 N（&gt;1）就是每 N 天跑一次</b>：上次认证后中间 N-1 天跳过，到第 N 天才再跑 —— 给「认证一次能撑好几天」的运营商（移动 / 联通）用。手动点「立即认证」不受限制。</p>
       </div>
       <label class="check"><input id="loginOnStartup" type="checkbox" /> 浏览器启动时认证一次</label>
       <label class="check"><input id="catchUpOnStartup" type="checkbox" /> 电脑/浏览器错过认证时间后，下次启动补一次</label>
       <label class="check"><input id="probeBeforeLogin" type="checkbox" /> 放宽探测判定：不是 204 的「单一来源结果」也算已联网（默认关）</label>
-      <p class="hint">扩展在认证时<b>总会</b>先做一次严格探测：只有检测点返回 204（或两个不同来源都确认通）才认定已联网、跳过认证。打开这个开关后，一个地址回了 2xx 也算数——只有确认你的学校不会屏蔽/伪装探测地址时才开，否则会退回到「明明掉线却说无需认证」的老毛病。</p>
+      <p class="hint">认证前会先探测一次：只有检测点返回 204 才认定「已联网、不用认证」。打开后一个地址回 2xx 也算数 —— 只在确认学校不会屏蔽探测地址时才开。</p>
     </section>
 
     <section>
@@ -54,19 +54,18 @@
           <option value="中国移动">中国移动</option>
           <option value="中国联通">中国联通</option>
         </select>
-        <p class="hint"><b>默认中国电信</b>：扩展是照着电信这条线路天天在跑的，选服务那一步也是按电信调的。移动 / 联通的选项留着，门户上真出现这两家时扩展会用同样的办法去选，但没有长期实测过，细节可能不一样。</p>
+        <p class="hint"><b>默认中国电信</b>（照着电信这条线路天天在跑、按它调的）。移动 / 联通的选项留着，门户上真出现这两家时会用同样的办法去选，但没有长期实测过。</p>
       </div>
       <label class="check"><input id="autoLoginOnPortalPage" type="checkbox" /> 浏览器打开认证页时自动填表提交（页面自己动手，无需等待后台）</label>
       <label class="check"><input id="reloginWhenOnline" type="checkbox" /> 到点时若上一次认证<b>还没到期</b>（门户直接显示「已在线」页），先点「我要下线」再重新认证一次</label>
-      <p class="hint">到了认证时间点，如果上一次认证还没到期，门户<b>不会给登录表单</b>，而是直接渲染一张「已在线」成功页（上面有个「我要下线」）。这种情况以前会被当成「本来就在线」跳过，认证时长就一直不续上、下次到点又是在线。打开这个开关后，扩展会先替你把「我要下线」点掉（含确认弹窗），等门户注销完跳回认证页，再把整套认证重做一遍——<b>让认证时长真正从这次开始续上</b>。若注销后门户把你留在「已下线」页，扩展会自动点它的「重新入网」按钮回到认证页；<b>万一门户改版认不出、或点了没反应，还会照门户自己的做法直接跳到它的重新入网地址</b>，所以即使没人去点「重新入网」，认证也一样会进到网页里做完。</p>
-      <p class="hint">配套的一点改动：<b>开着它（默认）时，到点或手动点「保存并立即认证一次」都会真的打开门户网页</b>。以前后台一看网络是通的（认证没到期时必然是通的）就一句「本次无需认证」收手、<b>一个页面都不开</b>，页面脚本连出场的机会都没有，那条续期支路永远跑不到。现在探测只用来找门户地址，不再被当成「无需认证」的结论；已经认证过时还会跳过网关检测地址、直接进门户自己的页面（那个检测地址在已认证状态下只会是一张空白页）。关掉开关则退回旧行为（已在线即跳过，不碰页面、也不开页面）。</p>
+      <p class="hint">开着时（默认），到点或手动认证都会<b>真的打开门户页</b>：先点「我要下线」+ 确认，等门户注销跳回认证页后<b>把整套认证重做一遍，让时长真正续上</b>。注销后若停在「已下线」页，会自动点「重新入网」回认证页（认不出还会照门户自己的做法直接跳过去）。关掉则退回「已在线就跳过、不碰页面」。</p>
       <label class="check"><input id="backgroundTab" type="checkbox" /> 自动打开的认证页放在后台标签，不抢焦点</label>
       <label class="check"><input id="closeTabOnSuccess" type="checkbox" /> 认证成功后关闭自动打开的认证页（推荐）</label>
       <label class="check"><input id="closeTriggerTabOnSuccess" type="checkbox" /> 认证成功后也关闭「触发认证的那个标签页」</label>
-      <p class="hint">默认只关扩展自己开的页面；<strong>认证一有结论就先发通知、再关页面</strong>，不会挂着不动。后者配合计划任务用：任务拉起 Edge → 扩展自动认证 → 标签页自动关掉，不留垃圾窗口。</p>
-      <p class="hint">流程本身是全自动的：密码框一出现就填账号密码 → 自动识别并选中服务商 → 确定；若弹出「认证失败」提示，会自动点「我知道了」并直接重新点「确定」重试（最多 3 轮，不需要重新登录、也不会重填密码），不需要人工干预。</p>
-      <p class="hint"><b>服务选择是独立一整页也没关系</b>：本门户点完「立即登录」会整页跳到 <code>entry/pc/serviceSelection</code>，那一页没有密码框。扩展把它当成独立的进场点，会自动选中服务商并点「确定」；万一把上面的开关关掉了、页面没动手，后台还会补一次指令。选服务时单选按钮／标签／卡片／列表都能认，认不出结构时还会逐层往上点容器、乃至整页粗搜运营商名字（能点的全点一遍）。万一卡住，弹窗底部会显示页面诊断、页面骨架和一小段原始 HTML，点一下即可复制。</p>
-      <p class="hint"><b>「成功」的判定很严格</b>：必须真的出现「认证成功 / 已在线」这类字样，而且服务选择弹窗和「确定」按钮都已消失——页头挂着「已连接」「注销」这类词不算数。判定不出来时，只有网络探测确认（204）才收尾，绝不会在服务还没选完时就把页面关掉。</p>
+      <p class="hint">默认只关扩展自己开的页面；认证一有结论就<b>先发通知、再关页面</b>。后者配合计划任务用：任务拉起 Edge → 自动认证 → 标签页自动关掉。</p>
+      <p class="hint">流程全自动：密码框一出现就填 → 自动选中服务商 → 确定。弹「认证失败」会自动重试（最多 3 轮，不用重新登录、也不会重填密码）。</p>
+      <p class="hint"><b>服务选择是独立一整页也没关系</b>：点完「立即登录」会整页跳到 <code>entry/pc/serviceSelection</code>（那一页没有密码框），扩展会把它当独立进场点自动选服务并确定。单选框／标签／卡片／列表都能认；万一卡住，弹窗底部会显示页面诊断和原始 HTML，点一下即可复制。</p>
+      <p class="hint"><b>「成功」判定很严格</b>：必须真出现「认证成功 / 已在线」这类字样，且服务弹窗和「确定」按钮都已消失 —— 页头的「已连接」「注销」不算数。判定不出来时要等网络探测确认，不会在服务没选完时就关页面。</p>
       <label class="check"><input id="notify" type="checkbox" /> 认证成功时弹一条系统通知（失败、以及「本来就在线」都不弹）</label>
       <div class="grid2">
         <div class="field">
@@ -86,7 +85,7 @@
         <label>认证页怎么打开</label>
         <label class="check"><input id="modeGateway" type="radio" name="portalOpenMode" value="gateway" /> 让校园网网关自动跳转（推荐）</label>
         <label class="check"><input id="modeDirect" type="radio" name="portalOpenMode" value="direct" /> 直接打开下面填写的认证页地址</label>
-        <p class="hint">推荐第一项：扩展打开一个网络检测地址，未认证时网关会带着 sessionId、userIp、userMac 等参数把浏览器跳到门户登录页。<b>这类门户的登录页直接访问是刷不出表单的</b>（缺参数），所以「直接打开」只适合地址里不含动态参数的学校。两种模式下扩展都会依次试多个入口（含下面的备用入口），一个刷不出表单就换下一个。</p>
+        <p class="hint">推荐第一项：未认证时网关会带着 sessionId、userIp 等动态参数把浏览器跳到门户登录页。<b>这类门户直接访问刷不出表单</b>（缺参数），「直接打开」只适合地址固定的学校。</p>
       </div>
       <div class="field">
         <label for="portalUrl">认证页地址（「直接打开」模式用，可留空）</label>
@@ -96,18 +95,18 @@
       <div class="field">
         <label for="portalFallbackUrl">备用入口地址（前面的入口都刷不出登录表单时再试它）</label>
         <input id="portalFallbackUrl" type="text" spellcheck="false" placeholder="https://portal.example.edu.cn/portal/entry/pc/finish" />
-        <p class="hint">扩展按「探测到的门户地址 → 网关跳转 → 备用入口 → 认证页地址」依次试，<b>哪个能刷出登录表单就用哪个</b>，所以这里<b>一般留空就行</b>。只有你的学校门户必须走某个固定地址才需要填（不知道填什么就留空）。</p>
+        <p class="hint">扩展会依次试多个入口，<b>哪个能刷出登录表单就用哪个</b>，所以这里<b>一般留空就行</b>。只有学校门户必须走某个固定地址时才需要填。</p>
       </div>
       <div class="field">
         <label for="checkUrls">探测地址（每行一个，按顺序尝试）</label>
         <textarea id="checkUrls" rows="4" spellcheck="false"></textarea>
-        <p class="hint"><b>只有 204 才算「真的通了」</b>；被网关跳转、或被回一个 200 的拦截页，都算需要认证。（旧版把这种 200 当成已联网，于是明明掉线却说「无需认证」，一个页面都不开。）「让网关自动跳转」模式下会取第一个 http:// 地址作为入口。<b>每个地址最多等 1.5 秒</b>，连挂两个就收手——不会因为某个地址不可达而把整轮认证卡住。</p>
+        <p class="hint"><b>只有 204 才算「真的通了」</b>；被网关跳转、或被回一个 200 拦截页，都算需要认证。<b>每个地址最多等 1.5 秒</b>，连挂两个就收手，不会卡住整轮认证。</p>
         <button id="btnTest" type="button">测试这些地址</button>
       </div>
       <div class="field">
         <label for="excludeHosts">排除域名（这些站点上<b>绝不会</b>自动操作，逗号或换行分隔）</label>
         <textarea id="excludeHosts" rows="3" spellcheck="false" placeholder="jwxt.example.edu.cn"></textarea>
-        <p class="hint"><b>1.13.0 新增。</b>教务系统、图书馆、邮箱这类校内站点同样挂在 <code>.edu.cn</code> 下、同样有登录框，有可能被当成校园网门户：填表提交、弹通知，最后还把网页关掉。扩展已按<b>页面内容</b>自动挡住「教务 / 选课 / 成绩 / 图书 / 一卡通 / 统一身份」这类业务系统；<b>万一还有站点被误伤，把它的域名加到这里</b>（写 <code>jwxt.example.edu.cn</code> 只排除它一个；写 <code>example.edu.cn</code> 会把门户也一起排掉，慎用）。</p>
+        <p class="hint">教务、图书馆、邮箱这类校内站点也有登录框，可能被误判成门户。扩展已按<b>页面内容</b>自动挡住「教务 / 选课 / 成绩 / 图书 / 一卡通 / 统一身份」这类业务系统；<b>万一还有站点被误伤，把它的域名填这里</b>（写 <code>jwxt.example.edu.cn</code> 只排除它一个；写 <code>example.edu.cn</code> 会把门户也一起排掉，慎用）。</p>
       </div>
     </section>
 
