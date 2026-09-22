@@ -34,7 +34,7 @@ const DEFAULT_CONFIG = {
   // gateway：打开网络检测地址，让校园网网关自己带着完整参数（sessionId/userIp/userMac…）跳到门户登录页
   // direct：直接打开下面填写的认证页地址
   portalOpenMode: 'gateway',
-  /* 默认按 Anhui Polytechnic University（安徽工程大学）配好：sam.ahpu.edu.cn。
+  /* 默认按安徽工程大学（Anhui Polytechnic University）配好：sam.ahpu.edu.cn。
    * 换学校时把这两项改成自己学校的就行；不知道填什么就都留空 ——
    * 默认的「让网关自动跳转」模式会自己探测门户地址，不依赖这两个值。 */
   portalUrl: 'https://sam.ahpu.edu.cn/portal/portal-main',
@@ -68,7 +68,7 @@ const DEFAULT_CONFIG = {
   selectors: { username: '', password: '', submit: '' },
   /* 1.13.0：这些域名上一律不自动操作（教务系统 / 办事大厅 / 统一身份认证这类校内业务系统）。
    * 逗号分隔，一行一个也行。写 `jwxt.xxx.edu.cn` 只排除它；写 `xxx.edu.cn` 会连门户一起排掉，慎用。
-   * 默认按本校（Anhui Polytechnic University）列好；换学校请把它们换成自己学校的业务域名，
+   * 默认按安徽工程大学（Anhui Polytechnic University）列好；换学校请换成自己学校的业务域名，
    * 或者干脆清空 —— 跨校通用的那层「按页面内容」防护（教务 / 选课 / 图书 …）始终生效。 */
   excludeHosts: [
     'xjwxt.ahpu.edu.cn',
@@ -154,7 +154,7 @@ function setState(patch) {
 /* ---------------- 1.13.0：校内业务系统排除名单 ---------------- *
  * 教务系统这类站点同样挂在 .edu.cn 下、同样有登录表单，不能被当成校园网门户。
  * （完整来龙去脉见 content.js 里 PORTAL_STRONG_RE 那段注释。） */
-/* 老配置里没存过这一项时的兜底：按本校（Anhui Polytechnic University）的业务域名来。
+/* 老配置里没存过这一项时的兜底：按安徽工程大学（Anhui Polytechnic University）的业务域名来。
  * 跨校通用的那层防护是页面侧的「排除词」（教务 / 选课 / 图书 …），它按页面内容判定，
  * 换哪所学校都有效 —— 这份域名清单只是给本校用户的一份默认值，换学校可在设置里改掉。 */
 const DEFAULT_EXCLUDE_HOSTS = [
