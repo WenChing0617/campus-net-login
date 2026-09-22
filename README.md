@@ -75,17 +75,7 @@ powershell -ExecutionPolicy Bypass -File tools\setup-scheduled-tasks.ps1 -Times 
 
 先加 `-DryRun` 看看会做什么。任务在「用户登录时」运行，电脑需处于已登录状态（锁屏可以，关机不行）。
 
-## 自测与打包
-
-```bash
-node test/flow-test.mjs        # 页面流程
-node test/background-test.mjs  # 后台调度
-node test/gate-check.mjs       # 校内站点不被误判
-python tools/build.py          # 以上全跑 + 打包 zip
-```
-
 改完代码在 `edge://extensions/` 点 **重新加载** 生效。
-想了解门户的真实结构，看 `tools/portal-structure.md`。
 
 ## 许可
 
