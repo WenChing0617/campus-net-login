@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "校园网自动登录",
-  "version": "1.16.3",
+  "version": "1.16.4",
   "description": "定时自动完成校园网认证：到点打开门户页 → 自动填账号密码 → 选运营商 → 提交，成功即通知并关页。可选「到期检测」：按有效期估算到期时刻，快到点密集探测，只在真掉线时才动手。平时不轮询，只留一个闹钟。主要适配安徽工程大学（Anhui Polytechnic University）。",
   "minimum_chrome_version": "102",
   "icons": {

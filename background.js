@@ -72,7 +72,8 @@ const DEFAULT_CONFIG = {
   schedule: { enabled: true, times: '08:00', intervalDays: 1 },
   /* ⚠ 默认**关**（1.16.3）：一开浏览器就认证一次太吵（真正需要的是「到点续期」，
    * 而且下面那个「错过补做」已经覆盖了关机错过的场景）。
-   * 想回到旧行为就在设置里自己勾上。 */
+   * 1.16.4 起由 `MIGRATIONS.startupAuthOff` 把**旧安装里已经勾上的**也取消掉一次；
+   * 之后主人自己想勾回来就随他，不会再被改。 */
   loginOnStartup: false,
   /* 错过补做：启动时如果发现「今天的计划时间已经过了、而那次没认证成功」才补一次。
    * 跟上面那个「无脑启动就认证」是两件事，它保持默认开。 */
@@ -1628,6 +1629,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onInstalled.addListener(async (details) => {
+  /* 点了「重新加载扩展」也会走这里（reason=update）—— 迁移放在最前面，
+   * 这样主人一重新加载，那个勾就已经被取消了。 */
+  await runMigrations();
   await scheduleNext();
   if (details && details.reason === 'install') {
     const cfg = await getConfig();
@@ -1641,7 +1645,52 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 });
 
+/* ---------- 一次性配置迁移 ----------
+ *
+ * 改「默认值」对**已经存过配置**的安装是无效的 —— getConfig() 是 `{...默认, ...已存}`，
+ * 主人浏览器里存着的还是旧值。所以「把某个开关默认改成关」这种要求，
+ * 必须**显式**把旧安装里存着的那个 true 也改掉，否则他会发现「界面上那个勾还勾着」。
+ *
+ * ⚠ 每个迁移只跑一次（storage 里独立的 `migrations` 标记，不放进 config —— 免得被设置页的
+ * 保存覆盖掉）。跑过一次之后，主人自己再勾回去就不会被强行改掉了。 */
+const MIGRATIONS = {
+  /* 1.16.4：取消「浏览器启动时认证一次」这个勾（1.16.3 只改了默认值，对已装好的无效）。 */
+  startupAuthOff: async () => {
+    const box = await chrome.storage.local.get('config');
+    const c = box.config || {};
+    if (c.loginOnStartup !== true) return; // 本来就没勾，不动
+    await chrome.storage.local.set({ config: { ...c, loginOnStartup: false } });
+  }
+};
+
+async function runMigrations() {
+  let box;
+  try {
+    box = await chrome.storage.local.get('migrations');
+  } catch (e) {
+    return;
+  }
+  const done = box.migrations || {};
+  const todo = Object.keys(MIGRATIONS).filter((k) => !done[k]);
+  if (!todo.length) return;
+  for (const k of todo) {
+    try {
+      await MIGRATIONS[k]();
+    } catch (e) {
+      /* 单个迁移失败不拦别的；照样打标记，绝不反复跑 */
+    }
+    done[k] = Date.now();
+  }
+  try {
+    await chrome.storage.local.set({ migrations: done });
+  } catch (e) {
+    /* 忽略 */
+  }
+}
+
 chrome.runtime.onStartup.addListener(async () => {
+  /* ⭐ 先跑迁移再读配置 —— 顺序反了的话，这次启动会拿着旧配置真的去认证一轮。 */
+  await runMigrations();
   await scheduleNext();
   const cfg = await getConfig();
   if (!cfg.enabled) return;
