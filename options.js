@@ -13,7 +13,8 @@ const DEFAULTS = {
     'https://www.baidu.com/favicon.ico'
   ].join('\n'),
   schedule: { enabled: true, times: '08:00', intervalDays: 1 },
-  loginOnStartup: true,
+  /* 1.16.3：默认**关**（一开浏览器就认证太吵；关机错过的场景交给下面的 catchUpOnStartup）。 */
+  loginOnStartup: false,
   catchUpOnStartup: true,
   probeBeforeLogin: false,
   autoLoginOnPortalPage: true,

@@ -70,7 +70,12 @@ const DEFAULT_CONFIG = {
    *   N > 1 = 每隔 N 天认证一次 —— 上次认证之后，中间 N-1 天直接跳过，
    *           到第 N 天的时间点才再跑。给那些「认证一次能撑好几天」的运营商用。 */
   schedule: { enabled: true, times: '08:00', intervalDays: 1 },
-  loginOnStartup: true,
+  /* ⚠ 默认**关**（1.16.3）：一开浏览器就认证一次太吵（真正需要的是「到点续期」，
+   * 而且下面那个「错过补做」已经覆盖了关机错过的场景）。
+   * 想回到旧行为就在设置里自己勾上。 */
+  loginOnStartup: false,
+  /* 错过补做：启动时如果发现「今天的计划时间已经过了、而那次没认证成功」才补一次。
+   * 跟上面那个「无脑启动就认证」是两件事，它保持默认开。 */
   catchUpOnStartup: true,
   probeBeforeLogin: false,
   autoLoginOnPortalPage: true,

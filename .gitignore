@@ -3,6 +3,7 @@
 test/
 tools/build.py
 tools/build-report.txt
+tools/defaults-check.mjs
 tools/probe-portal.py
 tools/portal-structure.md
 

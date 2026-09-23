@@ -52,7 +52,8 @@
         <p class="hint">电信这条线路实测约 <b>47 小时 49 分钟</b>（默认值）。<b>有效期只是估算</b>（实测会飘 ±20 秒上下），所以界面上不做倒计时，只用来决定「什么时候开始盯网络」。</p>
         <p class="hint">配合上面的勾使用：到期前 1 分钟开始每 5 秒探一次网络，<b>网关真的开始拦就立刻重新认证</b>，还通着就安静收手，不会平白打开网页。两个都填 0 = 关闭。</p>
       </div>
-      <label class="check"><input id="loginOnStartup" type="checkbox" /> 浏览器启动时认证一次</label>
+      <label class="check"><input id="loginOnStartup" type="checkbox" /> 浏览器启动时认证一次（<b>默认关</b>）</label>
+      <p class="hint">勾上就是「<b>一开浏览器就无条件认证一次</b>」。平时一般用不上 —— 到点续期由上面的「认证时间点」管，关机错过的场景由下面那个「错过补一次」管。只有你想「每次开浏览器都顺手刷新一次认证」时才勾它。</p>
       <label class="check"><input id="catchUpOnStartup" type="checkbox" /> 电脑/浏览器错过认证时间后，下次启动补一次</label>
       <label class="check"><input id="probeBeforeLogin" type="checkbox" /> 放宽探测判定：不是 204 的「单一来源结果」也算已联网（默认关）</label>
       <p class="hint">认证前会先探测一次：只有检测点返回 204 才认定「已联网、不用认证」。打开后一个地址回 2xx 也算数 —— 只在确认学校不会屏蔽探测地址时才开。</p>
