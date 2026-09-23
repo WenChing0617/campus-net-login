@@ -116,6 +116,14 @@ select:focus {
   flex: 1;
 }
 
+/* 「小时 / 分钟」这类单位跟在输入框后面，别被 flex 拉宽 */
+.inline .unit {
+  flex: none;
+  align-self: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;

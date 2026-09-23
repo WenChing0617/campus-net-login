@@ -80,11 +80,16 @@ const DEFAULT_CONFIG = {
    * 不勾：改成「按需认证」—— 到点先在计划时间前后 30 秒内高频探测，**没网才认证**、
    * 有网什么都不做；真正把时长续上的活儿交给下面的「到期看门狗」（见 sessionMinutes）。 */
   reloginWhenOnline: true,
-  /* 1.16.0：单次认证能管多久（分钟，可以带小数）。
-   * 默认 2869.33 分钟 = 47 小时 49 分 20 秒 —— 主人实测的电信这条线路的有效期。
-   * 填 0 = 不启用「到期看门狗」和弹窗里的倒计时。
-   * 到了这个点前后会自动密集探测：真掉线就立刻重认证，没掉线就安静收手。 */
-  sessionMinutes: 2869.33,
+  /* 1.16.0：单次认证能管多久（分钟）。默认 2869 = 47 小时 49 分钟 —— 主人实测电信约 47:49:20。
+   * ⚠ 这个值**只是估算**（实测会飘 ±20 秒上下），所以它只服务于下面的「到期检测」，
+   *   **不在界面上显示倒计时** —— 显示一个不准的到期时间反而误导。
+   * 填 0 = 不启用。 */
+  sessionMinutes: 2869,
+  /* 1.16.0：**独立的**「到期检测」开关（默认关）。
+   * 打开后才会按上面的有效期估算到期时刻：到期前 1 分钟开始每 5 秒探一次网络，
+   * 真掉线就重新认证、还通着就安静收手。
+   * 跟「到点先下线再认证」（reloginWhenOnline）是两条互不相干的线，各自单独勾选。 */
+  expiryRenew: false,
   backgroundTab: true,
   closeTabOnSuccess: true,
   closeTriggerTabOnSuccess: false,
@@ -116,7 +121,10 @@ const DEFAULT_STATE = {
   lastCheckVia: '',
   lastLoginAt: 0,
   lastLoginDay: '',
-  expiryAt: 0, // 1.16.0：认证到期时刻（lastLoginAt + sessionMinutes），弹窗倒计时用
+  /* 1.16.0：按「上次认证 + 有效期」估出来的到期时刻。**只写不显示** ——
+   * 有效期本身有偏差（实测会飘），界面上不做倒计时，留着只是方便排查
+   * 「它到底以为我什么时候到期」。 */
+  expiryAt: 0,
   expiryTries: 0, // 1.16.0：到期后「还通着」的重看次数（认证成功清零）
   lastAttemptAt: 0,
   lastResult: '',
@@ -697,8 +705,10 @@ async function scheduleExpiry() {
     /* 忽略 */
   }
   if (!at || !cfg.enabled || st.paused) return at;
-  /* 「定时认证」关掉 = 主人不要任何自动认证，那看门狗也不该自作主张。
-   * （到期时刻照样算出来给弹窗做倒计时，只是不挂闹钟。） */
+  /* 到期检测是**独立开关**，默认关着 —— 没打开就一个闹钟都不挂（有效期本身有偏差，
+   * 主人要的就是「不勾就别管」）。 */
+  if (!cfg.expiryRenew) return at;
+  /* 「定时认证」关掉 = 主人不要任何自动认证，那看门狗也不该自作主张。 */
   if (!cfg.schedule.enabled) return at;
   /* 到期时刻已经过去了（比如电脑关机好几天）→ 别挂一个马上就会响的闹钟去乱动，
    * 等下一次「定时 / 开机 / 手动」自然接手即可。 */
@@ -746,6 +756,9 @@ async function expiryFlow() {
   const cfg = await getConfig();
   const st = await getState();
   if (!cfg.enabled || st.paused) return;
+  /* 没勾「到期检测」就什么都不做 —— 闹钟可能是在打开勾选的那段时间里挂上的，
+   * 取消勾选后要等它自然响一次才清掉，这里再挡一道。 */
+  if (!cfg.expiryRenew) return;
   const at = expiryAtOf(cfg, st);
   if (!at) return;
   /* 来早了（配置刚改 / 闹钟提前醒）→ 重挂一个就收手。
@@ -1655,9 +1668,6 @@ async function getStatusPayload() {
       scheduleTimes: cfg.schedule.times,
       intervalDays: Number(cfg.schedule.intervalDays) || 1,
       loginOnStartup: cfg.loginOnStartup,
-      /* 1.16.0：弹窗要拿这两个画倒计时、并说明现在是哪种模式 */
-      sessionMinutes: Number(cfg.sessionMinutes) || 0,
-      reloginWhenOnline: !!cfg.reloginWhenOnline,
       advancedEnabled: !!cfg.advanced.enabled
     },
     state: st

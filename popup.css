@@ -120,11 +120,6 @@ h1 {
   white-space: nowrap;
 }
 
-/* 认证快到期了（剩不到 5 分钟）→ 倒计时标红，一眼能看见 */
-.row b.soon {
-  color: var(--red);
-}
-
 .msg {
   margin: 10px 0;
   padding: 8px 10px;

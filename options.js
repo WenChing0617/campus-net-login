@@ -18,8 +18,11 @@ const DEFAULTS = {
   probeBeforeLogin: false,
   autoLoginOnPortalPage: true,
   reloginWhenOnline: true,
-  /* 1.16.0：单次认证有效期（分钟）。2869.33 分钟 = 47 小时 49 分 20 秒（电信实测）。 */
-  sessionMinutes: 2869.33,
+  /* 1.16.0：单次认证有效期（分钟）。2869 = 47 小时 49 分钟（电信实测约 47:49:20）。
+   * 界面按「小时 + 分钟」两个框填，存的是分钟总数；只在勾了 expiryRenew 时才会用到。 */
+  sessionMinutes: 2869,
+  /* 1.16.0：独立的「到期检测」开关，默认关。 */
+  expiryRenew: false,
   backgroundTab: true,
   closeTabOnSuccess: true,
   closeTriggerTabOnSuccess: false,
@@ -47,6 +50,7 @@ const CHECK_IDS = [
   'probeBeforeLogin',
   'autoLoginOnPortalPage',
   'reloginWhenOnline',
+  'expiryRenew',
   'backgroundTab',
   'closeTabOnSuccess',
   'closeTriggerTabOnSuccess',
@@ -67,7 +71,7 @@ function load(cfg) {
   $('scheduleEnabled').checked = !!(cfg.schedule || {}).enabled;
   $('scheduleTimes').value = firstTime((cfg.schedule || {}).times) || DEFAULTS.schedule.times;
   $('intervalDays').value = Number((cfg.schedule || {}).intervalDays) || 1;
-  $('sessionMinutes').value = cfg.sessionMinutes === undefined ? DEFAULTS.sessionMinutes : cfg.sessionMinutes;
+  fillSessionInputs(cfg.sessionMinutes === undefined ? DEFAULTS.sessionMinutes : cfg.sessionMinutes);
   renderSessionHint();
   $('waitAfterSubmitSeconds').value = cfg.waitAfterSubmitSeconds;
   $('maxAttempts').value = cfg.maxAttempts;
@@ -103,42 +107,45 @@ function normalizeTimes(text) {
   return out.join(',');
 }
 
-/* 「分钟」→ 人话。秒也保留（电信实测那个 20 秒就藏在小数位里）。
-   例：2869.33 → «47 小时 49 分 20 秒»。 */
-function fmtDuration(mins) {
-  const total = Math.round(Number(mins) * 60);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const parts = [];
-  if (h) parts.push(h + ' 小时');
-  if (m) parts.push(m + ' 分');
-  if (s) parts.push(s + ' 秒');
-  return parts.join(' ') || '0 分';
+/* 有效期的上限：168 小时 = 7 天，免得填出天文数字。 */
+const SESSION_MAX_MIN = 168 * 60;
+
+/* 从「小时 + 分钟」两个框读有效期。空 / 非数字 / 负数都当 0，两个都是 0 = 不启用。 */
+function sessionMinutesFromInput() {
+  const h = Math.floor(Number($('sessHours').value)) || 0;
+  const m = Math.floor(Number($('sessMins').value)) || 0;
+  const total = Math.max(0, h) * 60 + Math.max(0, m);
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  return Math.min(SESSION_MAX_MIN, total);
 }
 
-const SESSION_MAX_MIN = 10080; // 7 天，给个上限免得填出天文数字
-
-/* 从输入框读有效期。0 / 空 / 负数一律当「不启用到期检测」。 */
-function sessionMinutesFromInput() {
-  const v = Number($('sessionMinutes').value);
-  if (!Number.isFinite(v) || v <= 0) return 0;
-  return Math.min(SESSION_MAX_MIN, Math.round(v * 100) / 100);
+/* 分钟总数 → 「47 小时 49 分钟」，写进提示行做确认：主人填了两个框，得能一眼对回来。 */
+function fmtDuration(totalMinutes) {
+  const total = Math.round(Number(totalMinutes) || 0);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  const parts = [];
+  if (h) parts.push(h + ' 小时');
+  if (m) parts.push(m + ' 分钟');
+  return parts.join(' ') || '0 分钟';
 }
 
 function renderSessionHint() {
   const el = $('sessionHint');
   if (!el) return;
-  const v = Number($('sessionMinutes').value);
-  if (!Number.isFinite(v) || v <= 0) {
-    el.textContent = '已关闭：不做到期检测，弹窗里也不显示倒计时。';
+  const v = sessionMinutesFromInput();
+  if (!v) {
+    el.textContent = '当前：0 —— 到期检测不会生效（两个框都填 0 就是不用这个功能）。';
     return;
   }
-  if (v > SESSION_MAX_MIN) {
-    el.textContent = '最多 ' + SESSION_MAX_MIN + ' 分钟（7 天），保存时会按上限处理。';
-    return;
-  }
-  el.textContent = '≈ ' + fmtDuration(v) + '。';
+  el.textContent = '当前：' + fmtDuration(v) + '（共 ' + v + ' 分钟）';
+}
+
+/* 把存着的「分钟总数」拆回两个输入框 */
+function fillSessionInputs(totalMinutes) {
+  const total = Math.max(0, Math.round(Number(totalMinutes) || 0));
+  $('sessHours').value = Math.floor(total / 60);
+  $('sessMins').value = total % 60;
 }
 
 /* 时间输入框（type="time"）只认一个时间。老配置里可能存着多个时间点，
@@ -211,7 +218,7 @@ async function save() {
   }
   await chrome.storage.local.set({ config: cfg, state: { retry: null } });
   $('scheduleTimes').value = firstTime(cfg.schedule.times);
-  $('sessionMinutes').value = cfg.sessionMinutes;
+  fillSessionInputs(cfg.sessionMinutes);
   renderSessionHint();
   flash('已保存 ' + new Date().toLocaleTimeString());
   return cfg;
@@ -286,8 +293,9 @@ $('btnSave').addEventListener('click', () => {
   save();
 });
 
-/* 有效期输入框边打字边把「≈ 47 小时 49 分 20 秒」算出来，省得主人自己换算 */
-$('sessionMinutes').addEventListener('input', renderSessionHint);
+/* 有效期两个输入框边打字边把「47 小时 49 分钟」算出来，省得主人自己换算 */
+$('sessHours').addEventListener('input', renderSessionHint);
+$('sessMins').addEventListener('input', renderSessionHint);
 
 $('btnLogin').addEventListener('click', async () => {
   const cfg = await save();
