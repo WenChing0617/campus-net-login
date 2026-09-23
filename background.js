@@ -13,9 +13,28 @@
 const ALARM_SCHEDULE = 'campus-schedule';
 const ALARM_RETRY = 'campus-retry';
 const ALARM_VERIFY = 'campus-verify';
+const ALARM_EXPIRY = 'campus-expiry';
 const MIN_GAP_MS = 2 * 60 * 1000; // 两次自动尝试之间的最小间隔
 const RETRY_DELAY_MIN = 0.5; // 失败后 30 秒重试一次（alarms 未打包扩展的最小粒度）
 const FAST_VERIFY_MS = 5000; // 兜底核查：5 秒（页面一般会更早自己报结论）
+/* ---------- 1.16.0：高频探测的两条窗口 ----------
+ * 主人实测：电信这条线路认证一次大约管 47 小时 49 分 20 秒（会飘 ±20 秒上下）。
+ * 靠闹钟精确掐点不可能 —— alarms 最小粒度 30 秒、被系统睡眠拖后更是常有的事。
+ * 所以改成「提前叫醒 + 密集探一段」：
+ *   · 会话到期：到期前 EXPIRY_LEAD_MS 就叫醒，然后每 EXPIRY_POLL_MS 探一次，
+ *     一直探到「到期后 EXPIRY_TAIL_MS」为止 —— 正好把 ±20 秒的偏差包在窗口里。
+ *   · 定时到点：提前 SCHEDULE_LEAD_MS 叫醒，在计划时间**前后 30 秒**内密集探
+ *     （SCHEDULE_BURST_PROBES 次 × SCHEDULE_BURST_MS）。
+ * 探测本身只是几个 generate_204 请求（每个约 0.1~0.3 秒、无副作用），
+ * 比「进网页、开标签、跑表单」便宜两个数量级，所以这里用探测换「绝不瞎折腾」。 */
+const EXPIRY_LEAD_MS = 60 * 1000; // 到期前 1 分钟开始盯（主人要求「最后一分钟」）
+const EXPIRY_TAIL_MS = 120 * 1000; // 到期后再盯 2 分钟，吸收闹钟延迟与时长偏差
+const EXPIRY_POLL_MS = 5000; // 盯梢时的探测间隔
+const EXPIRY_RETRY_MS = 5 * 60 * 1000; // 到期后还通着（时长估短了）→ 过 5 分钟再看一眼
+const EXPIRY_RETRY_MAX = 6; // 重看次数上限，别没完没了（认证成功后清零）
+const SCHEDULE_LEAD_MS = 30 * 1000; // 定时闹钟提前 30 秒叫醒
+const SCHEDULE_BURST_MS = 5000; // 到点窗口内的探测间隔
+const SCHEDULE_BURST_PROBES = 12; // 12 × 5 秒 = 60 秒 ≈ 计划时间前后各 30 秒
 const CLOSE_DELAY_MS = 300; // 判定成功后停留这么久再关页面，让人能瞥见结果
 const VERIFY_FLOOR_MS = 600; // 核查最短延迟：收到「可能要出结果了」就尽快探一次
 const DUPLICATE_WINDOW_MS = 5000; // 5 秒内只收尾一次，避免重复通知
@@ -56,9 +75,16 @@ const DEFAULT_CONFIG = {
   probeBeforeLogin: false,
   autoLoginOnPortalPage: true,
   /* 认证还没到期时门户不给登录表单，而是直接渲染「已在线」成功页（上面有「我要下线」）。
-   * 默认**开**：先点「我要下线」，等门户注销并回到认证页，再把认证重新做一遍 ——
-   * 这样认证时长才会真正续上。关掉则回到旧行为：当作「本来就在线」，不折腾。 */
+   * 勾上（默认）：到点**先点「我要下线」**，等门户注销并回到认证页，再把认证重新做一遍 ——
+   * 这样认证时长才会真正续上（强制续期，不看网络通不通）。
+   * 不勾：改成「按需认证」—— 到点先在计划时间前后 30 秒内高频探测，**没网才认证**、
+   * 有网什么都不做；真正把时长续上的活儿交给下面的「到期看门狗」（见 sessionMinutes）。 */
   reloginWhenOnline: true,
+  /* 1.16.0：单次认证能管多久（分钟，可以带小数）。
+   * 默认 2869.33 分钟 = 47 小时 49 分 20 秒 —— 主人实测的电信这条线路的有效期。
+   * 填 0 = 不启用「到期看门狗」和弹窗里的倒计时。
+   * 到了这个点前后会自动密集探测：真掉线就立刻重认证，没掉线就安静收手。 */
+  sessionMinutes: 2869.33,
   backgroundTab: true,
   closeTabOnSuccess: true,
   closeTriggerTabOnSuccess: false,
@@ -90,6 +116,8 @@ const DEFAULT_STATE = {
   lastCheckVia: '',
   lastLoginAt: 0,
   lastLoginDay: '',
+  expiryAt: 0, // 1.16.0：认证到期时刻（lastLoginAt + sessionMinutes），弹窗倒计时用
+  expiryTries: 0, // 1.16.0：到期后「还通着」的重看次数（认证成功清零）
   lastAttemptAt: 0,
   lastResult: '',
   lastResultAt: 0,
@@ -313,6 +341,9 @@ async function scheduleNext() {
   } catch (e) {
     /* 忽略 */
   }
+  /* 到期看门狗是独立的一条线：定时关掉时它也要照常挂着 ——
+   * 「按需认证」模式下真正把时长续上的就是它（见 expiryFlow）。 */
+  await scheduleExpiry();
   if (!cfg.enabled || !cfg.schedule.enabled) {
     await setState({ nextRunAt: 0 });
     await updateBadge();
@@ -326,7 +357,13 @@ async function scheduleNext() {
   }
   const st = await getState();
   const next = nextOccurrence(times, Date.now(), earliestByInterval(cfg, st));
-  chrome.alarms.create(ALARM_SCHEDULE, { delayInMinutes: Math.max(0.5, (next - Date.now()) / 60000) });
+  /* ⚠ 闹钟**提前 30 秒**响，不是掐着计划时间响：闹钟本身有 30~60 秒的粗粒度、
+   * 还会被系统睡眠往后拖，掐点必然不准。提前叫醒后再在「计划时间前后 30 秒」里
+   * 密集探一遍（见 onAlarm 里 ALARM_SCHEDULE 那段），比闹钟本身准得多。
+   * state.nextRunAt 存的仍是**真正的计划时间**，弹窗倒计时照旧按它显示。 */
+  chrome.alarms.create(ALARM_SCHEDULE, {
+    delayInMinutes: Math.max(0.5, (next - SCHEDULE_LEAD_MS - Date.now()) / 60000)
+  });
   await setState({ nextRunAt: next });
   await updateBadge();
   return next;
@@ -637,6 +674,122 @@ async function applyProbeResult(r) {
   return next;
 }
 
+/* ---------- 1.16.0：会话到期看门狗 + 到点窗口的高频探测 ---------- */
+
+/* 这次认证大概什么时候到期（毫秒时间戳）。没认证过 / 没填时长 → 0 = 不启用。 */
+function expiryAtOf(cfg, st) {
+  const mins = Number((cfg && cfg.sessionMinutes) || 0);
+  if (!Number.isFinite(mins) || mins <= 0) return 0;
+  if (!st || !st.lastLoginAt) return 0;
+  return st.lastLoginAt + Math.round(mins * 60000);
+}
+
+/* 挂/重挂「到期看门狗」闹钟。顺手把算出来的到期时刻写进 state，弹窗直接拿它做倒计时。
+ * 每次认证成功、改设置、重新排定时都会调一次 —— 所以它永远是跟着 lastLoginAt 走的。 */
+async function scheduleExpiry() {
+  const cfg = await getConfig();
+  const st = await getState();
+  const at = expiryAtOf(cfg, st);
+  if (st.expiryAt !== at) await setState({ expiryAt: at });
+  try {
+    await chrome.alarms.clear(ALARM_EXPIRY);
+  } catch (e) {
+    /* 忽略 */
+  }
+  if (!at || !cfg.enabled || st.paused) return at;
+  /* 「定时认证」关掉 = 主人不要任何自动认证，那看门狗也不该自作主张。
+   * （到期时刻照样算出来给弹窗做倒计时，只是不挂闹钟。） */
+  if (!cfg.schedule.enabled) return at;
+  /* 到期时刻已经过去了（比如电脑关机好几天）→ 别挂一个马上就会响的闹钟去乱动，
+   * 等下一次「定时 / 开机 / 手动」自然接手即可。 */
+  if (at + EXPIRY_TAIL_MS < Date.now()) return at;
+  const wake = at - EXPIRY_LEAD_MS;
+  chrome.alarms.create(ALARM_EXPIRY, { delayInMinutes: Math.max(0.5, (wake - Date.now()) / 60000) });
+  return at;
+}
+
+/* 在到期附近 / 到点附近**密集探一段**，用「到底有没有网」替代「进网页看页面」。
+ *
+ * 返回 { verdict: 'offline' | 'online' | 'unsure', probe }
+ *   · offline —— 网关正在拦（captive）。**只有这一种**才算「真的掉线」：
+ *                它是网关亲手交出的证据，不会认错。探到就立刻收工去认证。
+ *   · online  —— 探到最后一次仍是 204 级别的「真通了」→ 认证还没到期，什么都不用做。
+ *   · unsure  —— 其余全部（检测点被学校屏蔽 / 网络整个不通 / 单次抖动）→ 判不出来，
+ *                交回上层按老路进网页，让页面自己去认。**绝不靠猜就把整轮认证拉起来。**
+ *
+ * ⚠ 循环里每次都读一次 state：那不是为了数据，是为了**每隔几秒碰一下扩展 API**，
+ *   让 Service Worker 在 MV3 的 30 秒空闲回收面前活下来（这个窗口最长也就两三分钟，
+ *   而且一个认证周期只跑一次，代价可以忽略）。
+ * ⚠ 次数上限用**计数**而不是墙钟时间 —— 测试环境里 sleep 会被加速成 0ms，
+ *   用 Date.now() 判循环会原地空转到超时。 */
+async function probeBurst(maxProbes, gapMs) {
+  const total = Math.max(1, maxProbes || 1);
+  let lastProbe = null;
+  for (let i = 0; i < total; i += 1) {
+    await getState(); // 触碰扩展 API：防止 SW 在探测间隙被回收
+    const r = await probeConfirmed();
+    lastProbe = r;
+    await applyProbeResult(r);
+    if (r.captive) return { verdict: 'offline', probe: r };
+    if (i < total - 1) await sleep(gapMs || 0);
+  }
+  if (lastProbe && lastProbe.online && lastProbe.confidence === 'high') {
+    return { verdict: 'online', probe: lastProbe };
+  }
+  return { verdict: 'unsure', probe: lastProbe };
+}
+
+/* 到期看门狗到点：密集探一段，真掉线就立刻认证；还通着就过几分钟再看一眼。
+ * 两种模式都开着 —— 勾了「先下线再认证」的人是靠到点强制续期的，万一周期设得比
+ * 有效期还长，这条就是防止白白断网的兜底；没勾的人则主要靠它来续期。 */
+async function expiryFlow() {
+  const cfg = await getConfig();
+  const st = await getState();
+  if (!cfg.enabled || st.paused) return;
+  const at = expiryAtOf(cfg, st);
+  if (!at) return;
+  /* 来早了（配置刚改 / 闹钟提前醒）→ 重挂一个就收手。
+   * ⚠ 判据必须是「比窗口起点还早」，不能写成「还没到到期时刻」——
+   *   闹钟本来就是提前 1 分钟叫醒的，那个写法会把每一次唤醒都当成「来早了」，
+   *   于是永远只重挂闹钟、从不探测。 */
+  if (Date.now() < at - EXPIRY_LEAD_MS) {
+    await scheduleExpiry();
+    return;
+  }
+  /* 正在认证中，别插手。 */
+  if (st.flow && st.flow.status === 'running') {
+    await scheduleExpiry();
+    return;
+  }
+  if (!cfg.username || !cfg.password) return;
+
+  const windowMs = EXPIRY_LEAD_MS + EXPIRY_TAIL_MS;
+  const probes = Math.max(2, Math.round(windowMs / EXPIRY_POLL_MS));
+  await note('快到认证到期时间了，正在密集检测网络…');
+  const r = await probeBurst(probes, EXPIRY_POLL_MS);
+
+  if (r.verdict === 'offline') {
+    await setState({ expiryTries: 0 });
+    await loginFlow({ reason: 'expiry', force: true });
+    return;
+  }
+  if (r.verdict === 'online') {
+    /* 还通着 —— 说明这次的有效期比我们估的长。别瞎认证，过 5 分钟再看一眼；看够次数就算了。 */
+    const tries = (st.expiryTries || 0) + 1;
+    if (tries > EXPIRY_RETRY_MAX) {
+      await setState({ expiryTries: 0 });
+      await note('认证有效期比设置的更长，这次先不管了（可以到设置里把「单次认证有效期」调大）');
+      return;
+    }
+    await setState({ expiryTries: tries });
+    chrome.alarms.create(ALARM_EXPIRY, { delayInMinutes: Math.max(0.5, EXPIRY_RETRY_MS / 60000) });
+    return;
+  }
+  /* unsure：探测判不出来（检测点可能被学校屏蔽）→ 按老路进网页，让页面自己去判断。 */
+  await note('探测结果不可信，改用网页流程核对…');
+  await loginFlow({ reason: 'expiry', force: true });
+}
+
 /* ---------- 标签页与注入 ---------- */
 
 /* 网关跳转模式下的入口地址：挑一个 http 检测点。
@@ -812,6 +965,7 @@ async function finalizeSuccess(f, note, opts) {
   await setState({
     lastLoginAt: now,
     lastLoginDay: todayKey(now),
+    expiryTries: 0, // 1.16.0：新一轮会话开始，到期看门狗的重看计数清零
     lastResult: label,
     lastResultAt: now,
     diag: '',
@@ -820,6 +974,9 @@ async function finalizeSuccess(f, note, opts) {
     loginTabId: null,
     retry: null
   });
+  /* 1.16.0：刚认证成功 → 到期时刻变了，把看门狗挪到新的到期点前 1 分钟，
+   * 顺手把 state.expiryAt 更新掉（弹窗倒计时就是从它算的）。 */
+  await scheduleExpiry();
 
   // 先通知：不让人等「关页面」这段。
   // 只有「真的帮你认证了」才弹 —— 本来就在线（无需认证）时静默，免得白弹一次。
@@ -1387,8 +1544,30 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       const floorTs = earliestByInterval(cfg0, st0);
       await scheduleNext();
       if (floorTs && Date.now() < floorTs) return;
+      if (!cfg0.enabled || st0.paused) return;
+      /* ---- 1.16.0：「按需认证」模式（设置里没勾「先下线再认证」）----
+       * 在计划时间**前后 30 秒**内密集探测：没网才认证；有网就什么都不做，
+       * 连标签页都不开 —— 这是最省电脑资源的一条路。
+       * 勾了的（强制续期）不探，直接进页面走「我要下线 → 重新认证」，那是另一套。 */
+      if (!cfg0.reloginWhenOnline) {
+        if (!cfg0.username || !cfg0.password) return;
+        const r = await probeBurst(SCHEDULE_BURST_PROBES, SCHEDULE_BURST_MS);
+        if (r.verdict === 'offline') {
+          await loginFlow({ reason: 'schedule', force: true });
+          return;
+        }
+        if (r.verdict === 'online') {
+          await note('到点了，但网络正常（认证还没到期）—— 本次不做任何操作' + onlineNote(r.probe || {}));
+          return;
+        }
+        /* unsure：探测判不出来（检测点可能被学校屏蔽）→ 按老路进网页，让页面自己判断。 */
+      }
       await loginFlow({ reason: 'schedule' });
     })();
+    return;
+  }
+  if (alarm.name === ALARM_EXPIRY) {
+    expiryFlow().catch(() => {});
     return;
   }
   if (alarm.name === ALARM_VERIFY) {
@@ -1476,6 +1655,9 @@ async function getStatusPayload() {
       scheduleTimes: cfg.schedule.times,
       intervalDays: Number(cfg.schedule.intervalDays) || 1,
       loginOnStartup: cfg.loginOnStartup,
+      /* 1.16.0：弹窗要拿这两个画倒计时、并说明现在是哪种模式 */
+      sessionMinutes: Number(cfg.sessionMinutes) || 0,
+      reloginWhenOnline: !!cfg.reloginWhenOnline,
       advancedEnabled: !!cfg.advanced.enabled
     },
     state: st

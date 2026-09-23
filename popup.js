@@ -38,6 +38,49 @@ function send(msg) {
   });
 }
 
+/* 1.16.0：认证到期倒计时。
+ * 到期时刻由后台算好放在 state.expiryAt（= 上次成功认证 + 设置的「单次认证有效期」），
+ * 这里只管把它变成「还剩多久」往下走秒。 */
+function fmtCountdown(ms) {
+  if (!Number.isFinite(ms)) return '—';
+  const neg = ms < 0;
+  let t = Math.abs(Math.floor(ms / 1000));
+  const d = Math.floor(t / 86400);
+  t -= d * 86400;
+  const h = Math.floor(t / 3600);
+  t -= h * 3600;
+  const mi = Math.floor(t / 60);
+  const s = t - mi * 60;
+  const clock = pad(h) + ':' + pad(mi) + ':' + pad(s);
+  const body = d ? d + ' 天 ' + clock : clock;
+  return neg ? '已过期 ' + body : '剩 ' + body;
+}
+
+let lastState = null;
+let lastSessionMinutes = 0;
+
+function renderExpiry() {
+  const el = $('expiry');
+  const st = lastState || {};
+  if (!(lastSessionMinutes > 0)) {
+    el.classList.remove('soon');
+    el.textContent = '未启用';
+    el.title = '到设置里填「单次认证有效期」就能显示倒计时';
+    return;
+  }
+  if (!st.expiryAt) {
+    el.classList.remove('soon');
+    el.textContent = '待认证';
+    el.title = '还没有成功认证过，先认证一次';
+    return;
+  }
+  const left = st.expiryAt - Date.now();
+  el.textContent = fmtCountdown(left);
+  el.title = '到期时间：' + new Date(st.expiryAt).toLocaleString();
+  /* 只剩 5 分钟以内标红：一眼看出「快到期了，别指望它自己撑住」 */
+  el.classList.toggle('soon', left < 5 * 60 * 1000);
+}
+
 function render(payload) {
   if (!payload) {
     $('msg').textContent = '后台脚本暂时没有响应，请在扩展管理页重新加载本扩展。';
@@ -45,6 +88,8 @@ function render(payload) {
   }
   const cfg = payload.config || {};
   const st = payload.state || {};
+  lastState = st;
+  lastSessionMinutes = Number(cfg.sessionMinutes) || 0;
 
   const dot = $('dot');
   dot.className = 'dot';
@@ -136,3 +181,6 @@ $('btnOptions').addEventListener('click', () => {
 refresh();
 // 弹窗开着的时候刷新快一点，关掉就自动停了，不占后台
 setInterval(refresh, 2500);
+/* 倒计时单独走 1 秒一拍：那只是本地算一下减法，不再去问后台，
+ * 所以秒针是滑的，而网络/后台的查询仍然是 2.5 秒一次。 */
+setInterval(renderExpiry, 1000);

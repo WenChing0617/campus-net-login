@@ -39,6 +39,12 @@
         <input id="intervalDays" type="number" min="1" max="30" />
         <p class="hint"><b>1 = 每天</b>（默认）：上面几个时间点每天都跑。<b>填 N（&gt;1）就是每 N 天跑一次</b>：上次认证后中间 N-1 天跳过，到第 N 天才再跑 —— 给「认证一次能撑好几天」的运营商（移动 / 联通）用。手动点「立即认证」不受限制。</p>
       </div>
+      <div class="field">
+        <label for="sessionMinutes">单次认证有效期（分钟）</label>
+        <input id="sessionMinutes" type="number" min="0" max="10080" step="0.01" />
+        <p class="hint" id="sessionHint">—</p>
+        <p class="hint">一次认证能撑多久。电信这条线路实测约 <b>47 小时 49 分 20 秒</b>（= 2869.33 分钟，这是默认值）。填 <b>0</b> 表示不启用到期检测，弹窗里也不显示倒计时。<br />到点前 1 分钟开始密集检测网络：<b>真掉线就立刻重新认证</b>，还通着就安静收手，不会平白打开网页。</p>
+      </div>
       <label class="check"><input id="loginOnStartup" type="checkbox" /> 浏览器启动时认证一次</label>
       <label class="check"><input id="catchUpOnStartup" type="checkbox" /> 电脑/浏览器错过认证时间后，下次启动补一次</label>
       <label class="check"><input id="probeBeforeLogin" type="checkbox" /> 放宽探测判定：不是 204 的「单一来源结果」也算已联网（默认关）</label>
@@ -57,8 +63,10 @@
         <p class="hint"><b>默认中国电信</b>（照着电信这条线路天天在跑、按它调的）。移动 / 联通的选项留着，门户上真出现这两家时会用同样的办法去选，但没有长期实测过。</p>
       </div>
       <label class="check"><input id="autoLoginOnPortalPage" type="checkbox" /> 浏览器打开认证页时自动填表提交（页面自己动手，无需等待后台）</label>
-      <label class="check"><input id="reloginWhenOnline" type="checkbox" /> 定时认证时若上一次认证<b>还没到期</b>（门户直接显示「已在线」页），先点「我要下线」再重新认证一次</label>
-      <p class="hint">开着时（默认），<b>定时 / 开机 / 重试</b>这类后台自己发起的认证会<b>真的打开门户页</b>：先点「我要下线」+ 确认，等门户注销跳回认证页后<b>把整套认证重做一遍，让时长真正续上</b>。注销后若停在「已下线」页，会自动点「重新入网」回认证页（认不出还会照门户自己的做法直接跳过去）。关掉则退回「已在线就跳过、不碰页面」。</p>
+      <label class="check"><input id="reloginWhenOnline" type="checkbox" /> 到点先「我要下线」再重新认证（<b>强制续期</b>）；不勾则改成「<b>按需认证</b>」：只在检测到真的掉线时才认证</label>
+      <p class="hint"><b>勾上（默认）</b>：<b>定时 / 开机 / 重试</b>这类后台自己发起的认证会<b>真的打开门户页</b>：先点「我要下线」+ 确认，等门户注销跳回认证页后<b>把整套认证重做一遍，让时长真正续上</b>。注销后若停在「已下线」页，会自动点「重新入网」回认证页（认不出还会照门户自己的做法直接跳过去）。<b>不看网络通不通，到点就续。</b></p>
+      <p class="hint"><b>不勾</b>：完全不碰「下线」。到点时先在计划时间<b>前后 30 秒内密集检测网络</b> —— <b>没网才认证，有网连页面都不开</b>；真正负责把时长续上的是上面那个「单次认证有效期」的到期检测。这是最省电脑资源的配法。</p>
+      <p class="hint">上面两种模式里，<b>「单次认证有效期」的到期检测都照常生效</b>（那是一条兜底，只在真掉线时才动手）。</p>
       <p class="hint"><b>手动操作不受这个开关影响</b>：点弹窗里的「立即认证」、或自己打开认证页时，会先用一次网络探测（约 0.1~0.3 秒）确认设备到底有没有网 —— <b>真有网就什么都不做</b>（不下线、不重登、不折腾），只有确实没网才动手。这样既不会一打开网页就被下线，也最省电脑资源。</p>
       <p class="hint">唯一例外：如果探测<b>确认</b>网关正在拦（页面那张「已在线」其实是缓存／假的，设备根本没网），手动操作也会走一遍「下线 → 重新认证」把网络恢复回来 —— 这时下线不影响你正在用的连接，因为本来就没网。</p>
       <label class="check"><input id="backgroundTab" type="checkbox" /> 自动打开的认证页放在后台标签，不抢焦点</label>
