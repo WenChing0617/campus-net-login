@@ -1006,24 +1006,42 @@ async function loginFlow(opts) {
   }
   if (!o.force && Date.now() - (st.lastAttemptAt || 0) < MIN_GAP_MS) return st;
 
-  /* 「认证要真的进网页」——主人原话：「未点击重新入网，保存设置认证也要进入网页」。
-   *
-   * ⚠ 这是「续期」能不能生效的关键开关。下面两处都有「网络没问题 → 本次无需认证」的提前收手，
-   *   一旦走那条路，后台**连一个页面都不开**，页面脚本就没机会跑
-   *   「已在线 → 点『我要下线』→ 重新认证」这条支路，在线时长永远停在上次那个点。
-   *   认证没到期时网络本来就是通的（探测必回 204），所以那句「无需认证」恰恰是假结论。
-   *   现在：
-   *     · 手动点「保存并立即认证一次」/ 弹窗「打开认证页」 → 无条件进网页（主人明确要求）；
-   *     · 定时触发 + 开了「认证没到期也要续期」            → 同样必须进网页，由页面决定要不要注销重来。
-   *   探测从此只用来**找门户地址**，不再被当成「无需认证」的结论。 */
-  const insist = !!cfg.reloginWhenOnline || o.reason === 'manual' || o.reason === 'open-portal' || !!o.manual;
+  /* 这次是不是**主人自己点的**（弹窗「立即认证」/「打开认证页」，或他自己打开门户页）。
+   * 这两类跟「定时」要区别对待 —— 见下面那段。 */
+  const manualClick =
+    o.reason === 'manual' || o.reason === 'open-portal' || o.reason === 'portal-page' || !!o.manual;
+  /* 只有后台自己发起的流程（定时 / 开机 / 错过补做 / 重试）才允许「已在线也先下线再认证」，
+   * 因为那是为了把认证时长续上。 */
+  const insist = !manualClick && !!cfg.reloginWhenOnline;
 
-  if (cfg.probeBeforeLogin && o.probe !== false) {
+  /* ---- 先看设备到底有没有网，再决定要不要动手 ----
+   *
+   * 有网 = 这次认证还有效：
+   *   · 「立即认证」  → 什么都不做，连页面都不开（省时间也省电脑资源）；
+   *   · 「打开认证页」→ 页面照旧开出来给主人看，但**一个认证动作都不做**
+   *     （不开页会让他以为按钮失灵；页面脚本会因为拿不到流程标记而自动收手）。
+   * 没网 = 该认证了 → 继续往下走，打开登录页把账号密码填完。
+   *
+   * 定时 / 开机 / 重试**不受这段影响**：开了「认证没到期也要续期」时仍然必须进网页，
+   * 由页面决定要不要先「我要下线」再认证一遍（在线时长才不会停在上次那个点）。
+   * 所以那句「网络正常，本次无需认证」只留给定时流程里没开续期的情况。 */
+  let manualOnline = false;
+  if (o.probe !== false && (manualClick || cfg.probeBeforeLogin)) {
     const r = await probeConfirmed();
     st = await applyProbeResult(r);
-    if (!insist && r.online && r.confidence === 'high') {
-      await note('网络正常，本次无需认证' + onlineNote(r));
-      return await getState();
+    if (r.online && r.confidence === 'high') {
+      if (manualClick) {
+        manualOnline = true;
+        if (o.reason === 'open-portal') {
+          await note('设备已联网，认证还没到期 —— 只把页面打开，不做任何操作' + onlineNote(r));
+        } else {
+          await note('设备已联网，认证还没到期 —— 本次不做任何操作' + onlineNote(r));
+          return await getState();
+        }
+      } else if (!insist) {
+        await note('网络正常，本次无需认证' + onlineNote(r));
+        return await getState();
+      }
     }
   }
 
@@ -1180,6 +1198,10 @@ async function loginFlow(opts) {
   } else {
     ready = await waitForPortalReady(tabId, 8, 400, 1000);
   }
+
+  /* 「打开认证页」而设备本来就联网（上面探测过）：页面留给主人看，扩展到这儿就收手 ——
+   * 不注入脚本、不发指令、不下线。页面脚本自己也会因为拿不到「定时流程」标记而不动手。 */
+  if (manualOnline) return await getState();
 
   await injectContent(tabId);
 
@@ -1477,6 +1499,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const r = await probeWithRetry(2);
       await applyProbeResult(r);
       sendResponse(await getStatusPayload());
+    })();
+    return true;
+  }
+
+  /* 页面脚本问「现在到底有没有网」。
+   *
+   * ⚠ 为什么必须由后台来探：内容脚本跑在页面的 origin 下，跨域 fetch 受 CORS 约束，
+   * 读不到状态码、也读不到正文 —— 探测点回的是 204 还是网关塞的拦截页，它根本分不出来。
+   * 后台有 host_permissions，fetch 不受 CORS 限制，所以探测一律交给它做。
+   *
+   * 顺手把结果写进 state：一次询问两用，弹窗那边的「最近检测」也跟着更新。 */
+  if (msg.type === 'PROBE_NOW') {
+    (async () => {
+      try {
+        const r = await probeConfirmed();
+        await applyProbeResult(r);
+        sendResponse({
+          online: !!r.online,
+          confidence: r.confidence || '',
+          captive: !!r.captive,
+          unsure: !!r.unsure,
+          via: r.via || '',
+          why: r.why || r.error || ''
+        });
+      } catch (e) {
+        sendResponse({ online: false, unknown: true, why: (e && e.message) || String(e) });
+      }
     })();
     return true;
   }

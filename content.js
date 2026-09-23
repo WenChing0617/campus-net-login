@@ -1765,6 +1765,45 @@
     }
   }
 
+  /* 问后台「现在到底有没有网」—— 这是判断「认证还在不在有效期」最省的一条路：
+   * 一个 HTTP 往返（约 0.1~0.3 秒），不开页、不注入、不轮询。
+   *
+   * ⚠ 为什么不在页面里自己 fetch 探测点：内容脚本跑在页面的 origin 下，跨域请求受 CORS 约束，
+   * 状态码和正文都读不到 —— 探测点回的是 204 还是网关塞的拦截页，根本分不出来。
+   * 后台有 host_permissions，fetch 不受 CORS 限制，所以探测一律交给它做。
+   *
+   * ttlMs 内重复问会直接复用上一次结果：SPA 门户一次导航会触发好几轮 DOM 变化，
+   * 不缓存的话同一页要白探好几次。 */
+  let netProbeCache = { at: 0, r: null };
+  function probeNetwork(ttlMs) {
+    const ttl = ttlMs === undefined ? 3000 : ttlMs;
+    const now = Date.now();
+    if (netProbeCache.r && now - netProbeCache.at < ttl) return Promise.resolve(netProbeCache.r);
+    return new Promise((resolve) => {
+      let done = false;
+      let timer = null;
+      const finish = (r) => {
+        if (done) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        if (r && !r.unknown) netProbeCache = { at: Date.now(), r };
+        resolve(r || null);
+      };
+      try {
+        chrome.runtime.sendMessage({ type: 'PROBE_NOW' }, (r) => {
+          void chrome.runtime.lastError;
+          finish(r);
+        });
+      } catch (e) {
+        finish(null);
+      }
+      // 后台没应答（被系统回收等）不能让页面干等 —— 超时就当「问不出来」，
+      // 上层会按「探不通」处理，照旧走完整流程，不会因为探测失败就不认证。
+      timer = setTimeout(() => finish(null), 5000);
+      if (done) clearTimeout(timer); // 同步回调已经答过了，别留悬挂计时器
+    });
+  }
+
   /* 密码只允许填在「确认是校园网门户」的页面上：
    *   1) 与设置里填的认证页 / 自动发现到的门户同源，或
    *   2) 内网 IP / .edu.cn 域名，且页面内容确实像认证门户（有账号、密码、认证等字样）
@@ -1876,6 +1915,23 @@
     if (!hostAllowed(cfg, st)) {
       if (!hasPw) explainServiceSkip('当前站点不在允许自动操作的范围内（可在设置里填一下认证页地址）', where);
       return false;
+    }
+    /* ⭐ 「已在线」页先用网络探测确认一次，再决定动不动手 —— 主人这轮明确要的：
+     *
+     *   手动打开认证页时，如果认证其实**还没到期**，扩展就不该动手。旧版在这一页固定走
+     *   「先下线再认证」，于是主人一打开网页就被下线、还常常认证不回来。
+     *   现在改成：探到真的有网（高置信度）就**什么都不做**，立刻收手；
+     *   探不通 / 说不清 / 只是「疑似」→ 照旧往下走，让流程去处理，绝不因为探测失败就不认证。
+     *
+     * 只有这一页需要探：有密码框那一页不用探 —— 网关把你拦到登录页本身就说明没网了，
+     * 再花一次往返纯属浪费（这也是最省的做法）；服务选择 / 已下线页各有自己的判断，不掺和。 */
+    if (role === 'online') {
+      const net = await probeNetwork();
+      if (net && net.online && net.confidence === 'high') {
+        /* 标记「这一页我管过了」：MutationObserver 会因为 DOM 变化反复来问，不标记就要反复探。 */
+        selfStartedService = true;
+        return false;
+      }
     }
     if (!hasPw) {
       // 无密码框的这三种页：密码在上一页已经提交过了（或根本不需要），这里不要求填过密码；

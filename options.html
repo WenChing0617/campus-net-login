@@ -57,8 +57,9 @@
         <p class="hint"><b>默认中国电信</b>（照着电信这条线路天天在跑、按它调的）。移动 / 联通的选项留着，门户上真出现这两家时会用同样的办法去选，但没有长期实测过。</p>
       </div>
       <label class="check"><input id="autoLoginOnPortalPage" type="checkbox" /> 浏览器打开认证页时自动填表提交（页面自己动手，无需等待后台）</label>
-      <label class="check"><input id="reloginWhenOnline" type="checkbox" /> 到点时若上一次认证<b>还没到期</b>（门户直接显示「已在线」页），先点「我要下线」再重新认证一次</label>
-      <p class="hint">开着时（默认），到点或手动认证都会<b>真的打开门户页</b>：先点「我要下线」+ 确认，等门户注销跳回认证页后<b>把整套认证重做一遍，让时长真正续上</b>。注销后若停在「已下线」页，会自动点「重新入网」回认证页（认不出还会照门户自己的做法直接跳过去）。关掉则退回「已在线就跳过、不碰页面」。</p>
+      <label class="check"><input id="reloginWhenOnline" type="checkbox" /> 定时认证时若上一次认证<b>还没到期</b>（门户直接显示「已在线」页），先点「我要下线」再重新认证一次</label>
+      <p class="hint">开着时（默认），<b>定时 / 开机 / 重试</b>这类后台自己发起的认证会<b>真的打开门户页</b>：先点「我要下线」+ 确认，等门户注销跳回认证页后<b>把整套认证重做一遍，让时长真正续上</b>。注销后若停在「已下线」页，会自动点「重新入网」回认证页（认不出还会照门户自己的做法直接跳过去）。关掉则退回「已在线就跳过、不碰页面」。</p>
+      <p class="hint"><b>手动操作不受这个开关影响</b>：点弹窗里的「立即认证」、或自己打开认证页时，会先用一次网络探测（约 0.1~0.3 秒）确认设备到底有没有网 —— <b>真有网就什么都不做</b>（不下线、不重登、不折腾），只有确实没网才动手。这样既不会一打开网页就被下线，也最省电脑资源。</p>
       <label class="check"><input id="backgroundTab" type="checkbox" /> 自动打开的认证页放在后台标签，不抢焦点</label>
       <label class="check"><input id="closeTabOnSuccess" type="checkbox" /> 认证成功后关闭自动打开的认证页（推荐）</label>
       <label class="check"><input id="closeTriggerTabOnSuccess" type="checkbox" /> 认证成功后也关闭「触发认证的那个标签页」</label>
