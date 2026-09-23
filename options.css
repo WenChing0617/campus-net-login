@@ -137,18 +137,23 @@ select:focus {
   gap: 12px;
 }
 
+/* 勾选项一律用块级排版：写成 flex 的话，label 里的纯文字和 <b> 会被拆成
+   各自独立的 flex item 并排挤在一行，长标签直接错乱（1.16.5 修的）。
+   悬挂缩进让自动换行后的第二行跟首行文字对齐。 */
 .check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: block;
+  padding-left: 20px;
+  text-indent: -20px;
   font-size: 13px;
+  line-height: 1.6;
   color: var(--text);
   margin-bottom: 8px;
   cursor: pointer;
 }
 
 .check input {
-  margin: 0;
+  margin: 0 6px 0 0;
+  vertical-align: -2px;
 }
 
 .hint {

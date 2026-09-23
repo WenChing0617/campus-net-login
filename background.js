@@ -1006,7 +1006,11 @@ async function finalizeSuccess(f, note, opts) {
    * 以前是 `!f.fromTab` —— 页面脚本在主人自己开的页面上跑完流程时，后台补的 flow 恰好 fromTab=false，
    * 于是主人的页面被关掉（教务系统「打开后自己消失」就是这么来的）。 */
   const ours = await isOpenedByUs(f && f.tabId, f);
-  const closeIt = (cfg.closeTabOnSuccess && f && f.tabId && ours) || (cfg.closeTriggerTabOnSuccess && f && f.tabId);
+  /* o.keepTab：「打开认证页」这类**主人点名要看**的页面，收尾时一律不关（1.16.5）。
+   * 要能压过 closeTriggerTabOnSuccess —— 那个开关是给「计划任务拉起的标签页」用的。 */
+  const closeIt =
+    !o.keepTab &&
+    ((cfg.closeTabOnSuccess && f && f.tabId && ours) || (cfg.closeTriggerTabOnSuccess && f && f.tabId));
   if (closeIt && f.tabId) {
     await sleep(CLOSE_DELAY_MS);
     await closeTabQuietly(f.tabId);
@@ -1203,11 +1207,15 @@ async function loginFlow(opts) {
    * ⚠ insist 的流程**跳过这次探测**：反正结果不会让它收手（该动手还是要动手），
    * 白探一次只是拖慢「主人点完多久才有反应」。后面打开页面前那一次探测照样会跑。 */
   let manualOnline = false;
+  /* 上面这一次探测的结论，后面「挑哪个地址打开」时还要用：
+   * 「打开认证页」是 forcePortal 流程，它会**跳过**下面那次探测，`probed` 会是 null。 */
+  let earlyProbe = null;
   const shouldProbe =
     o.probe !== false &&
     (isOpenPortal || (manualClick && !insist) || cfg.probeBeforeLogin);
   if (shouldProbe) {
     const r = await probeConfirmed();
+    earlyProbe = r;
     st = await applyProbeResult(r);
     if (r.online && r.confidence === 'high') {
       if (isOpenPortal) {
@@ -1312,12 +1320,23 @@ async function loginFlow(opts) {
     /* ⚠ 已经认证过（探测真通了）时，网关检测地址不会再把你跳到登录页 ——
      * 打开它只会得到一张空白页、白等十几秒。这种情况直接跳过它，
      * 让第一个候选就是门户自己的地址，页面才能立刻开始干活。 */
-    const gatewayUseful = entryRedirects && !(probed && probed.online && probed.confidence === 'high');
+    /* 已经确认「设备本来就有网」时，网关检测地址**不再是可用入口**：
+     * 它靠「未认证 → 网关 302 跳到门户」干活，设备在线时它只会应一声 204，
+     * 打开它就是一张空白页 —— 而且紧接着下面的探测还会把这页关掉。
+     * ⚠ 这条保护以前只覆盖自动流程（那条路 `probed` 有值）；「打开认证页」是 forcePortal 流程、
+     *   `probed` 恒为 null，于是检测地址又跑到候选第一位：主人点按钮只会看到白页一闪就没了。
+     *   所以这里把上面那次探测（earlyProbe）的结论也算进来（1.16.5 修）。 */
+    const knownOnline =
+      manualOnline || !!(earlyProbe && earlyProbe.online && earlyProbe.confidence === 'high');
+    const gatewayUseful =
+      entryRedirects && !knownOnline && !(probed && probed.online && probed.confidence === 'high');
     if (mode === 'gateway') {
       pushUrl(probed && probed.portal);
+      /* 已知在线：门户自己的地址排最前 —— 主人要看的就是它 */
+      if (knownOnline) pushUrl(cfg.portalUrl || st.portalCandidate);
       if (gatewayUseful) pushUrl(gatewayEntryUrl(cfg));
       pushUrl(cfg.portalFallbackUrl);
-      pushUrl(cfg.portalUrl);
+      pushUrl(cfg.portalUrl || st.portalCandidate);
       if (!entryRedirects) pushUrl(gatewayEntryUrl(cfg));
     } else {
       pushUrl(cfg.portalUrl || st.portalCandidate);
@@ -1363,7 +1382,9 @@ async function loginFlow(opts) {
         await finalizeSuccess(
           { tabId, fromTab: false, status: 'skipped' },
           '门户页面显示已在线，无需认证',
-          { idle: true }
+          /* 「打开认证页」是主人**点名要看这张页面**（弹窗按钮），
+           * 别按「认证成功后关页面」把它收掉 —— 收了他只会以为按钮失灵（1.16.5）。 */
+          { idle: true, keepTab: isOpenPortal }
         );
         return await getState();
       }
@@ -1374,8 +1395,13 @@ async function loginFlow(opts) {
       await applyProbeResult(p);
       if (p.captive === false && p.online && p.confidence === 'high') {
         // 打开的是检测地址、结果网络本来就是好的
-        await closeTabQuietly(tabId);
-        await note('网络正常，本次无需认证' + onlineNote(p));
+        /* 自动流程（定时/补做）开出来的临时页当然要关；
+         * 「打开认证页」是主人点名要看的，留着（1.16.5）。 */
+        if (!isOpenPortal) await closeTabQuietly(tabId);
+        await note(
+          (isOpenPortal ? '设备已联网，认证还没到期 —— 页面留给你看' : '网络正常，本次无需认证') +
+            onlineNote(p)
+        );
         return await getState();
       }
       await note('打不开登录表单，已依次试过：' + tried.join(' → ') + '（最后一次探测：' + (p.error || p.why || '无') + '）');
