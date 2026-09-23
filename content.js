@@ -1271,15 +1271,10 @@
      *
      * ⚠ 特意**不用** isServiceSelectionPage() 做判据：那个函数里有「页面文字包含『选择服务』」
      *   这种松判定，落地页上写一句「已选择服务：中国电信」就会把它误判成「还停在选服务页」。
-     *   这里只要硬信号：地址、密码框、可见的确定按钮 + 可见的服务选项。 */
-    const whereAmI = () => {
-      try {
-        const u = new URL(location.href);
-        return u.host + u.pathname;
-      } catch (e) {
-        return '新页面';
-      }
-    };
+     *   这里只要硬信号：地址、密码框、可见的确定按钮 + 可见的服务选项。
+     *
+     * ⚠ 结论文案里**不带落地网址**：弹窗就那么宽，`host+pathname` 一长串会把那行挤到溢出
+     *   （主人反馈过）。「已跳转到完成界面」这一句本身就够了。 */
 
     const leftSubmitPage = () => {
       if (!submitUrl) return false; // 还没点过「确定」，谈不上跳走
@@ -1406,7 +1401,7 @@
       /* 页面已经是「已下线成功页」的话就不用再下线一次了（门户自己先下线了，或上一轮已点过） */
       if (!findLogoutEntry() && isOfflineSuccessPage()) return await reconnectFromOfflinePage();
       if (allowRelogin === false) {
-        return finish('skipped', '页面显示已连接，无需登录（设置里关掉了「已在线时先下线再认证」）');
+        return finish('skipped', '页面显示已连接，无需登录（本次不下线重认证）');
       }
       /* 先给后台打一个「正在下线重认证」的标记：这一段网络本来就是通的（认证还没到期），
        * 后台不能拿 204 探测去判「已完成」，否则会在半路收尾、把下线流程打断。 */
@@ -1526,16 +1521,19 @@
     /* 「已在线」这一条要排在 confirmConnected 前面 —— 否则「您已成功连接网络」会被
      * SUCCESS_RE 认成「刚认证成功」，直接 skipped 收尾，下线续期就永远不会发生。 */
     if (enterAtOnline) {
-      /* 开关来自设置；后台下发指令时不一定带着它，没带就现读一次配置。
-       * 默认**开**：认证没到期时也先下线再认证（主人这轮的要求）。 */
+      /* ⭐ 允许「先下线再认证」的三种情况，其余一律安静收手：
+       *   1) 指令里明确带了 allowRelogin（调用方说了算）；
+       *   2) 后台自己发起的续期流程（renew:true）且设置里那个开关开着；
+       *   3) 页面自称「已在线」，但**探测确认网关正在拦**（netOffline）——
+       *      这时页面是缓存/在说谎，设备本来就没网，下线重认证是**恢复**网络，
+       *      不会下掉主人正在用的连接。
+       *
+       * ⚠ 主人手动打开认证页走的自启动，默认落到 else：**不下线**。
+       * 门户常常先渲染登录表单、提交之后才显示「已在线」，旧版在这一步按配置默认 true，
+       * 就把主人正在用的网络当场下线了 —— 这就是「主动打开还是会下线」的根因。 */
       let allow = p.allowRelogin;
       if (allow === undefined) {
-        try {
-          const box = await chrome.storage.local.get('config');
-          allow = (box.config || {}).reloginWhenOnline !== false;
-        } catch (e) {
-          allow = true;
-        }
+        allow = p.renew === true ? await reloginSwitchOn() : p.netOffline === true;
       }
       return await logoutThenRelogin(allow);
     }
@@ -1707,7 +1705,7 @@
       /* 已经跳转到最终界面 ⇒ 立刻算完成。
        * 这一条比「出现成功字样」宽松（不是每个门户都会写「认证成功」四个字），
        * 但比旧版那个「弹窗消失就算成功」严得多 —— 它要求地址**真的变了**。 */
-      if (dlg && dlg.gone) return successExit('已跳转到完成界面 ' + whereAmI());
+      if (dlg && dlg.gone) return successExit('已跳转到完成界面');
 
       if (dlg && dlg.ok) {
         if (await confirmConnected()) return successExit('页面出现连接成功标识');
@@ -1720,7 +1718,7 @@
          * 弹窗只是被重渲染抹掉的那一瞬间，就被误判成成功、关页面。
          * 现在返回 probable，交给后台用「可信网络探测」定论：只有探测确认 204 才算成功。 */
         // 恰好在超时那一瞬间跳走的：再确认一次，别把「已完成」拖成「待确认」
-        if (leftSubmitPage()) return successExit('已跳转到完成界面 ' + whereAmI());
+        if (leftSubmitPage()) return successExit('已跳转到完成界面');
         const quiet = await waitUntil(
           () => (!failureDialog() && !serviceDialog() && !visibleConfirmExists() && !hasPasswordField() ? true : null),
           budget(W_QUIET),
@@ -1746,12 +1744,23 @@
       }
     }
 
-    if (leftSubmitPage()) return successExit('已跳转到完成界面 ' + whereAmI());
+    if (leftSubmitPage()) return successExit('已跳转到完成界面');
     if (await confirmConnected()) return successExit('页面出现连接成功标识');
     return finish(
       'failed',
       '已提交 ' + attempts + ' 次账号密码、点「确定」' + confirmed + ' 次仍未成功，最近步骤：' + (log.slice(-3).join(' → ') || '无')
     );
+  }
+
+  /* 设置里「已在线时先下线再认证」开着吗？
+   * 读不到设置就当作**关** —— 宁可不下线：网络的连续性比续期更重要。 */
+  async function reloginSwitchOn() {
+    try {
+      const box = await chrome.storage.local.get('config');
+      return (box.config || {}).reloginWhenOnline !== false;
+    } catch (e) {
+      return false;
+    }
   }
 
   /* ---------------- 页面自己动手（不再等后台催） ---------------- */
@@ -1925,6 +1934,7 @@
      *
      * 只有这一页需要探：有密码框那一页不用探 —— 网关把你拦到登录页本身就说明没网了，
      * 再花一次往返纯属浪费（这也是最省的做法）；服务选择 / 已下线页各有自己的判断，不掺和。 */
+    let netOffline = false;
     if (role === 'online') {
       const net = await probeNetwork();
       if (net && net.online && net.confidence === 'high') {
@@ -1932,6 +1942,10 @@
         selfStartedService = true;
         return false;
       }
+      /* 探测**明确**说「被网关拦着」＝ 这张「已在线」页面是缓存/说谎，设备其实没网。
+       * 那就允许走「下线重认证」把网络恢复回来（见 runFlow 的 enterAtOnline 分支）。
+       * ⚠ 只有 captive（网关确实在拦你）才算数：unsure（检测点被学校屏蔽）绝不能当下线的理由。 */
+      netOffline = !!(net && net.online === false && net.captive === true);
     }
     if (!hasPw) {
       // 无密码框的这三种页：密码在上一页已经提交过了（或根本不需要），这里不要求填过密码；
@@ -1953,7 +1967,7 @@
       role === 'service'
         ? '检测到服务选择页，页面内立即自动选择…'
         : role === 'online'
-          ? '检测到已在线（认证未到期），先下线再重新认证…'
+          ? '检测到已在线页面，正在核对是否需要续期…'
           : role === 'offline'
             ? '检测到已下线页面，正在返回认证页…'
             : '检测到认证页，页面内立即自动填写…';
@@ -1966,9 +1980,13 @@
       operator: cfg.operator || OPERATORS[0],
       selectors: cfg.selectors,
       serviceOnly: onService,
-      /* 已在线时要不要「先下线再认证」，由设置里的开关决定（默认开）。
-       * 关掉时回到旧行为：当作「本来就在线」，直接跳过不折腾。 */
-      allowRelogin: cfg.reloginWhenOnline !== false
+      /* ⚠ 页面自启动**永远不下线重认证**（renew: false）—— 续期只由后台那份指令发起。
+       * 以前这里传的是 `allowRelogin: 设置开关`，于是主人一打开认证页、页面自己跑到「已在线」
+       * 就把正在用的网络下线了 —— 主人反馈的「主动打开还是会下线」就是这么来的。
+       * netOffline 是上面那次探测的结论：网关确实在拦时，页面这张「已在线」是假的，
+       * 允许重认证把网络恢复回来。 */
+      renew: false,
+      netOffline
     })
       .catch((e) => {
         report({ result: { ok: false, status: 'failed', note: '流程异常：' + ((e && e.message) || e), final: true } });

@@ -128,6 +128,11 @@ h1 {
   color: var(--text);
   font-size: 12px;
   min-height: 34px;
+  /* 长串（网址、一串参数）必须能折断换行，否则会把弹窗撑到溢出（主人反馈过）。
+   * 文案里已经不放网址了，这里只是兜底。 */
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 
 /* 探测结论：比主消息小一号、淡一点，但一直显示，方便定位「凭什么说已联网」 */
@@ -139,6 +144,8 @@ h1 {
   border: 1px dashed var(--line);
   color: var(--muted);
   font-size: 11px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .grid {

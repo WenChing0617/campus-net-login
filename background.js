@@ -583,11 +583,12 @@ async function probeConfirmed() {
   return first;
 }
 
-/* 给「已联网」结论配一句人话，写进弹窗，方便一眼看出凭什么 */
+/* 给「已联网」结论配一句人话，写进弹窗，方便一眼看出凭什么。
+ * ⚠ 不要把探测地址写进去 —— 弹窗就那么宽，一长串 URL 会把那行挤到溢出（主人反馈过）。 */
 function onlineNote(p) {
   if (!p) return '';
-  if (p.confidence === 'high') return p.via ? '（' + p.via + ' 返回 204）' : '';
-  if (p.agreed && p.agreed.length) return '（' + p.agreed.join(' 与 ') + ' 都确认通了）';
+  if (p.confidence === 'high') return '（探测点返回 204）';
+  if (p.agreed && p.agreed.length) return '（两个探测点都确认通过）';
   return '（多来源探测确认）';
 }
 
@@ -750,15 +751,6 @@ function isServiceSelectionUrl(u) {
 /* 「流程页」＝ 认证还没走完的页面（登录页 / 服务选择页）。 */
 function isFlowPageUrl(u) {
   return /authenticate|serviceSelection|selectService|service[-_]?select|chooseService|select[-_]?identity/i.test(String(u || ''));
-}
-
-function shortOf(u) {
-  try {
-    const x = new URL(u);
-    return x.host + x.pathname;
-  } catch (e) {
-    return String(u || '').slice(0, 60);
-  }
 }
 
 /* 「跳转到最终界面」＝ 认证完成（主人这轮的要求）。
@@ -1243,7 +1235,11 @@ async function loginFlow(opts) {
         username: cfg.username,
         password: cfg.password,
         operator: cfg.operator,
-        selectors: cfg.selectors
+        selectors: cfg.selectors,
+        /* ⭐ 只有「后台自己发起的续期流程」才带这个标记，页面据此决定「已在线」时要不要下线重认证。
+         * 手动操作（点按钮 / 自己打开认证页）走到这里时 insist 是 false，页面就只会安静收手。
+         * 见 content.js 里 runFlow 的 enterAtOnline 分支。 */
+        renew: !!insist
       }
     });
   } catch (e) {
@@ -1290,7 +1286,7 @@ async function verifyFlow() {
   if ((f.confirmed || 0) >= 1 && f.tabId) {
     const t = await chrome.tabs.get(f.tabId).catch(() => null);
     if (t && landedOnFinalPage(f, t.url)) {
-      await finalizeSuccess(f, '已跳转到完成界面 ' + shortOf(t.url));
+      await finalizeSuccess(f, '已跳转到完成界面');
       return;
     }
   }
@@ -1370,7 +1366,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
        *    这条取代了旧的「跳离门户域 → 600ms 后排一次探测」：那时还得等一次探测才能收尾，
        *    通知和关页面都被拖后。现在直接收尾（认证已经做完了，没有不确定的东西要等）。 */
       if (landedOnFinalPage(f, url)) {
-        await finalizeSuccess(f, '已跳转到完成界面 ' + shortOf(url));
+        await finalizeSuccess(f, '已跳转到完成界面');
         return;
       }
 
