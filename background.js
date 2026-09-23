@@ -1168,42 +1168,60 @@ async function loginFlow(opts) {
   }
   if (!o.force && Date.now() - (st.lastAttemptAt || 0) < MIN_GAP_MS) return st;
 
-  /* 这次是不是**主人自己点的**（弹窗「立即认证」/「打开认证页」，或他自己打开门户页）。
-   * 这两类跟「定时」要区别对待 —— 见下面那段。 */
-  const manualClick =
-    o.reason === 'manual' || o.reason === 'open-portal' || o.reason === 'portal-page' || !!o.manual;
-  /* 只有后台自己发起的流程（定时 / 开机 / 错过补做 / 重试）才允许「已在线也先下线再认证」，
-   * 因为那是为了把认证时长续上。 */
-  const insist = !manualClick && !!cfg.reloginWhenOnline;
+  /* 「只是进页面看看」的两条路：弹窗「打开认证页」、主人自己导航到门户页。
+   * 这两条**永远不下线**（进页面看一眼而已，凭什么把他的网掐掉）。 */
+  const isOpenPortal = o.reason === 'open-portal' || o.reason === 'portal-page';
+  /* 这次是不是**主人自己点的**（弹窗「立即认证」/「打开认证页」，或他自己打开门户页）。 */
+  const manualClick = o.reason === 'manual' || isOpenPortal || !!o.manual;
+  /* 允许「已在线也先下线再认证」（=强制续期）的流程：
+   *   · 后台自己发起的续期（定时 / 开机 / 错过补做 / 重试）——为了把在线时长续上；
+   *   · **「立即认证」**——主人点这个按钮的意思就是「给我重新认证一遍」；
+   *   · 「打开认证页」/ 自己打开门户页**不在其中** —— 它们只是进页面，绝不下线。
+   * 是否真的下线仍由设置里的「到点先我要下线再重新认证」决定。 */
+  const insist = !isOpenPortal && !!cfg.reloginWhenOnline;
 
   /* ---- 先看设备到底有没有网，再决定要不要动手 ----
    *
    * 有网 = 这次认证还有效：
-   *   · 「立即认证」  → 什么都不做，连页面都不开（省时间也省电脑资源）；
    *   · 「打开认证页」→ 页面照旧开出来给主人看，但**一个认证动作都不做**
-   *     （不开页会让他以为按钮失灵；页面脚本会因为拿不到流程标记而自动收手）。
+   *     （不开页会让他以为按钮失灵；页面脚本会因为拿不到流程标记而自动收手）；
+   *   · 主人自己打开门户页看到「已在线」→ 安静收手，连注入都免了；
+   *   · 「立即认证」但**没开**续期开关 → 什么都不做；开了续期开关就属于 insist，
+   *     照样往下开页面，让页面走「下线再认证」——毕竟他点的就是「重新认证一遍」。
    * 没网 = 该认证了 → 继续往下走，打开登录页把账号密码填完。
    *
    * 定时 / 开机 / 重试**不受这段影响**：开了「认证没到期也要续期」时仍然必须进网页，
    * 由页面决定要不要先「我要下线」再认证一遍（在线时长才不会停在上次那个点）。
-   * 所以那句「网络正常，本次无需认证」只留给定时流程里没开续期的情况。 */
+   * 所以那句「网络正常，本次无需认证」只留给定时流程里没开续期的情况。
+   *
+   * ⚠ insist 的流程**跳过这次探测**：反正结果不会让它收手（该动手还是要动手），
+   * 白探一次只是拖慢「主人点完多久才有反应」。后面打开页面前那一次探测照样会跑。 */
   let manualOnline = false;
-  if (o.probe !== false && (manualClick || cfg.probeBeforeLogin)) {
+  const shouldProbe =
+    o.probe !== false &&
+    (isOpenPortal || (manualClick && !insist) || cfg.probeBeforeLogin);
+  if (shouldProbe) {
     const r = await probeConfirmed();
     st = await applyProbeResult(r);
     if (r.online && r.confidence === 'high') {
-      if (manualClick) {
-        manualOnline = true;
+      if (isOpenPortal) {
         if (o.reason === 'open-portal') {
+          manualOnline = true;
           await note('设备已联网，认证还没到期 —— 只把页面打开，不做任何操作' + onlineNote(r));
         } else {
           await note('设备已联网，认证还没到期 —— 本次不做任何操作' + onlineNote(r));
           return await getState();
         }
       } else if (!insist) {
-        await note('网络正常，本次无需认证' + onlineNote(r));
+        /* 「立即认证」但设置里没开续期 → 也什么都不做，只是措辞照着「他点的是哪个按钮」来说；
+         * 定时流程没开续期时才是那句「网络正常，本次无需认证」。 */
+        const txt = manualClick
+          ? '设备已联网，认证还没到期 —— 本次不做任何操作'
+          : '网络正常，本次无需认证';
+        await note(txt + onlineNote(r));
         return await getState();
       }
+      /* else：insist（立即认证 / 定时续期）→ 继续往下，开页面走「下线再认证」 */
     }
   }
 
@@ -1406,8 +1424,10 @@ async function loginFlow(opts) {
         password: cfg.password,
         operator: cfg.operator,
         selectors: cfg.selectors,
-        /* ⭐ 只有「后台自己发起的续期流程」才带这个标记，页面据此决定「已在线」时要不要下线重认证。
-         * 手动操作（点按钮 / 自己打开认证页）走到这里时 insist 是 false，页面就只会安静收手。
+        /* ⭐ 带这个标记的流程，页面在「已在线」时可以走「我要下线 → 重新认证」：
+         *   · 后台自己发起的续期（定时 / 开机 / 错过补做 / 重试）；
+         *   · 主人点的「立即认证」。
+         * 「打开认证页」/ 主人自己打开门户页走到这里时 insist 是 false，页面只会安静收手。
          * 见 content.js 里 runFlow 的 enterAtOnline 分支。 */
         renew: !!insist
       }

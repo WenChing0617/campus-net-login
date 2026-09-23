@@ -142,6 +142,11 @@
   let flowRunning = false;
   let selfStarted = false; // 登录页那条流程有没有自己跑过
   let selfStartedService = false; // 「服务选择」那条有没有自己跑过（独立整页时是另一条）
+  /* 本页脚本是什么时候跑起来的 —— 用来分辨「后台那条流程是不是**这一页**的」：
+   * 后台是在页面加载完之后才写 state.flow 的，所以「flow.startedAt 比本页还早」就说明
+   * 那条流程属于**上一页**（最典型的就是下线跳转过来的新页），本页该自己动手。 */
+  const PAGE_AT = Date.now();
+  let pageRestart = false; // 本页是不是刚被「下线后重启」叫过（见 restartFlowSoon）
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || '').replace(/\s+/g, '').trim();
@@ -1300,6 +1305,11 @@
           flowRunning = false;
           selfStarted = false;
           selfStartedService = false;
+          /* ⭐ 这一轮是**我们自己**要重启的（门户在同一页里切回认证视图），
+           * 别再被下面那条「后台流程还在跑，先让一下」的规则挡住 ——
+           * 那条规则认的是 state.flow，而下线重认证正是后台那条流程发起的，
+           * 不豁免的话页面会一直让位，主人看到的就是「下线成功了，然后没有然后」。 */
+          pageRestart = true;
         } catch (e) {
           /* 忽略 */
         }
@@ -1523,12 +1533,15 @@
     if (enterAtOnline) {
       /* ⭐ 允许「先下线再认证」的三种情况，其余一律安静收手：
        *   1) 指令里明确带了 allowRelogin（调用方说了算）；
-       *   2) 后台自己发起的续期流程（renew:true）且设置里那个开关开着；
+       *   2) 指令带 renew:true 且设置里那个开关开着 —— 这条只由**想让认证时长往前走**的
+       *      流程下发：后台的续期（定时 / 开机 / 错过补做 / 重试），以及主人点的
+       *      **「立即认证」**（他点这个按钮的意思就是「给我重新认证一遍」）；
        *   3) 页面自称「已在线」，但**探测确认网关正在拦**（netOffline）——
        *      这时页面是缓存/在说谎，设备本来就没网，下线重认证是**恢复**网络，
        *      不会下掉主人正在用的连接。
        *
-       * ⚠ 主人手动打开认证页走的自启动，默认落到 else：**不下线**。
+       * ⚠ 主人**主动进页面**（点「打开认证页」、或自己敲门户地址）走的这条路永远落到
+       * 「不下线」那一侧：后台给它的指令是 renew:false，页面自启动那份也是 renew:false。
        * 门户常常先渲染登录表单、提交之后才显示「已在线」，旧版在这一步按配置默认 true，
        * 就把主人正在用的网络当场下线了 —— 这就是「主动打开还是会下线」的根因。 */
       let allow = p.allowRelogin;
@@ -1774,6 +1787,15 @@
     }
   }
 
+  /* 后台是不是**正在**跑一轮流程？后台会**先**把 flow 写进 state，**再**下发页面指令
+   * （`chrome.tabs.sendMessage` 要等页面那边 listener 就位才到得了），所以看到
+   * 「15 秒内新起的 running」基本就等于「指令马上到，别自己抢着动手」。
+   * ⚠ 只认新鲜的：浏览器被杀掉之类的情况会在 state 里留一个永远 running 的旧值。 */
+  function bgFlowFresh(st) {
+    const f = (st && st.flow) || null;
+    return !!(f && f.status === 'running' && Date.now() - (f.startedAt || 0) < 15000);
+  }
+
   /* 问后台「现在到底有没有网」—— 这是判断「认证还在不在有效期」最省的一条路：
    * 一个 HTTP 往返（约 0.1~0.3 秒），不开页、不注入、不轮询。
    *
@@ -1936,6 +1958,13 @@
      * 再花一次往返纯属浪费（这也是最省的做法）；服务选择 / 已下线页各有自己的判断，不掺和。 */
     let netOffline = false;
     if (role === 'online') {
+      /* ⭐ 「已在线」页先看后台有没有**正在发起**一轮流程。有就让位：这一页动不动手、
+       * 要不要下线，全由那条指令里的 renew 标记说了算 ——
+       *   「立即认证」→ renew:true → 走「我要下线 → 重新认证」；
+       *   「打开认证页 / 主人自己打开门户页」→ renew:false → 安静收手。
+       * 少了这一步，页面自己那份（renew:false）会抢在指令前面跑完并报「无需登录」，
+       * 主人点了「立即认证」却什么都没发生（指令还会被「页面内已有流程」挡回去）。 */
+      if (bgFlowFresh(st)) return false;
       const net = await probeNetwork();
       if (net && net.online && net.confidence === 'high') {
         /* 标记「这一页我管过了」：MutationObserver 会因为 DOM 变化反复来问，不标记就要反复探。 */
@@ -1946,6 +1975,8 @@
        * 那就允许走「下线重认证」把网络恢复回来（见 runFlow 的 enterAtOnline 分支）。
        * ⚠ 只有 captive（网关确实在拦你）才算数：unsure（检测点被学校屏蔽）绝不能当下线的理由。 */
       netOffline = !!(net && net.online === false && net.captive === true);
+      /* 探测这一个来回里后台很可能已经把指令发下来了 —— 再确认一次，别和它抢同一页。 */
+      if (flowRunning || bgFlowFresh((await loadCtx()).st)) return false;
     }
     if (!hasPw) {
       // 无密码框的这三种页：密码在上一页已经提交过了（或根本不需要），这里不要求填过密码；
@@ -1956,10 +1987,20 @@
       selfStartedService = true;
     } else {
       if (!cfg.username || !cfg.password) return false;
-      // 后台刚刚（8 秒内）才开的流程有它自己的一份，页面先让一下，避免同一页跑两遍；
-      // 超过 8 秒还没动静说明它卡住了，页面直接接管。
+      /* 「后台刚刚（8 秒内）才开的流程有它自己的一份，页面先让一下」——
+       * ⚠ 但只让给**本页**的流程：flow.startedAt 比本页还早 = 那是上一页留下的一轮
+       * （最典型的是「下线 → 门户跳到认证页」，后台那条流程还在 running，
+       * 可它管的是上一页，本页不让位就要一直干等）。超过 8 秒还没动静也直接接管。
+       * pageRestart 是下线后自己叫的重启，同样要放行。 */
       const f = st.flow;
-      if (f && f.status === 'running' && Date.now() - (f.startedAt || 0) < 8000) return false;
+      const bgDrivingThisPage =
+        !pageRestart &&
+        f &&
+        f.status === 'running' &&
+        (f.startedAt || 0) > PAGE_AT &&
+        Date.now() - (f.startedAt || 0) < 8000;
+      pageRestart = false;
+      if (bgDrivingThisPage) return false;
       selfStarted = true;
     }
 
@@ -1980,7 +2021,8 @@
       operator: cfg.operator || OPERATORS[0],
       selectors: cfg.selectors,
       serviceOnly: onService,
-      /* ⚠ 页面自启动**永远不下线重认证**（renew: false）—— 续期只由后台那份指令发起。
+      /* ⚠ 页面自启动**永远不下线重认证**（renew: false）—— 「立即认证」那种要下线的活
+       * 由后台那份 renew:true 的指令发起（见上面 role === 'online' 的让位判定）。
        * 以前这里传的是 `allowRelogin: 设置开关`，于是主人一打开认证页、页面自己跑到「已在线」
        * 就把正在用的网络下线了 —— 主人反馈的「主动打开还是会下线」就是这么来的。
        * netOffline 是上面那次探测的结论：网关确实在拦时，页面这张「已在线」是假的，
