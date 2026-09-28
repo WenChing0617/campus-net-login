@@ -1725,7 +1725,11 @@ chrome.runtime.onStartup.addListener(async () => {
     await loginFlow({ reason: 'startup', force: true });
     return;
   }
-  if (cfg.catchUpOnStartup) {
+  /* 1.16.6：定时认证关掉时**不再补做**。
+   * 「补做」的前提是「有错过的计划」；计划本身都没开，就没有可补的东西。
+   * 旧版不看这个开关，只拿 schedule.times 里那个时间点过没过做判断，
+   * 于是主人把「定时认证」关掉之后，每天首次启动浏览器仍会被强制认证一轮。 */
+  if (cfg.catchUpOnStartup && cfg.schedule.enabled) {
     const st = await getState();
     const times = parseTimes(cfg.schedule.times);
     const passed = times.some((t) => {
@@ -1737,7 +1741,15 @@ chrome.runtime.onStartup.addListener(async () => {
     const floorTs = earliestByInterval(cfg, st);
     const due = !floorTs || Date.now() >= floorTs;
     if (passed && st.lastLoginDay !== todayKey() && due) {
-      await loginFlow({ reason: 'catchup', force: true });
+      /* 1.16.6：动手之前先探一次网络。设备还有网，就说明认证根本没到期 ——
+       * 这时候硬跑一轮（reloginWhenOnline 还会「先下线」），会把主人刚恢复的标签页、
+       * 尤其是**固定标签页**，当场踢到认证页上，看起来就是「每次打开浏览器都进认证页」。
+       * 有网就什么都不做，把「续期」交给到期检测（expiryRenew）。 */
+      const p = await probeConfirmed();
+      await applyProbeResult(p);
+      if (!(p.online && p.confidence === 'high')) {
+        await loginFlow({ reason: 'catchup', force: true });
+      }
     }
   }
 });

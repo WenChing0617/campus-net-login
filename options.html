@@ -54,6 +54,7 @@
       </div>
       <label class="check"><input id="loginOnStartup" type="checkbox" /> 浏览器启动时认证一次</label>
       <label class="check"><input id="catchUpOnStartup" type="checkbox" /> 电脑/浏览器错过认证时间后，下次启动补一次</label>
+      <p class="hint">补做<b>跟着上面的「启用定时认证」走</b> —— 定时关掉了就不补做。动手前还会先探一次网络：<b>设备还有网就什么都不做</b>（免得把你刚打开、或固定在标签栏的页面踢去认证页），只有确实没网才去认证。</p>
       <label class="check"><input id="probeBeforeLogin" type="checkbox" /> 放宽探测判定：不是 204 的「单一来源结果」也算已联网（默认关）</label>
       <p class="hint">认证前会先探测一次：只有检测点返回 204 才认定「已联网、不用认证」。打开后一个地址回 2xx 也算数 —— 只在确认学校不会屏蔽探测地址时才开。</p>
     </section>
