@@ -714,8 +714,12 @@ async function scheduleExpiry() {
   /* 到期检测是**独立开关**，默认关着 —— 没打开就一个闹钟都不挂（有效期本身有偏差，
    * 主人要的就是「不勾就别管」）。 */
   if (!cfg.expiryRenew) return at;
-  /* 「定时认证」关掉 = 主人不要任何自动认证，那看门狗也不该自作主张。 */
-  if (!cfg.schedule.enabled) return at;
+  /* ⚠ 1.16.7：这里原本还有一道 `if (!cfg.schedule.enabled) return at;`，
+   * 说法是「定时认证关掉 = 主人不要任何自动认证，看门狗也别自作主张」。
+   * 但「到期检测」是**独立勾选**的开关 —— 主人既然专门勾了它，就是想让它干活。
+   * 被「定时认证」顺手掐掉属于**静默失效**：设置页没写这个依赖、弹窗里「下次认证」
+   * 也永远是个「—」，主人根本看不出来。
+   * 现在按「独立开关」的本意走：勾了就归它管，跟「定时认证」开不开无关。 */
   /* 到期时刻已经过去了（比如电脑关机好几天）→ 别挂一个马上就会响的闹钟去乱动，
    * 等下一次「定时 / 开机 / 手动」自然接手即可。 */
   if (at + EXPIRY_TAIL_MS < Date.now()) return at;
@@ -1780,6 +1784,9 @@ async function getStatusPayload() {
       scheduleTimes: cfg.schedule.times,
       intervalDays: Number(cfg.schedule.intervalDays) || 1,
       loginOnStartup: cfg.loginOnStartup,
+      /* 1.16.7：弹窗拿它判断「下次认证到底谁在管」—— 定时认证关掉时，是靠到期检测兜底，
+       * 还是压根不会自动认证。不给的话弹窗只能猜。 */
+      expiryRenew: !!cfg.expiryRenew,
       advancedEnabled: !!cfg.advanced.enabled
     },
     state: st

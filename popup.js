@@ -66,7 +66,25 @@ function render(payload) {
   $('schedule').textContent = cfg.scheduleEnabled
     ? (everyN > 1 ? '每 ' + everyN + ' 天 ' + cfg.scheduleTimes : '每天 ' + cfg.scheduleTimes)
     : '未启用';
-  $('nextRun').textContent = cfg.scheduleEnabled && !st.paused ? fmtTime(st.nextRunAt) : '—';
+  /* 「下次认证」得能一眼看出**到底谁在管**、以及是不是估算值：
+   *   · 暂停          → 已暂停
+   *   · 定时认证开着   → 定时那一刻（真闹钟，准时）＋「每 N 天」时标明周期
+   *   · 只靠到期检测   → 按「单次认证有效期」估出来的时刻，本身会飘，所以标个「约」
+   *   · 两个都没开     → 明说「不会自动认证」，别只甩一个「—」让人猜 */
+  if (st.paused) {
+    $('nextRun').textContent = '已暂停';
+  } else if (cfg.scheduleEnabled) {
+    const everyN = Number(cfg.intervalDays) || 1;
+    $('nextRun').textContent =
+      fmtTime(st.nextRunAt) + (everyN > 1 ? '（每 ' + everyN + ' 天）' : '');
+  } else if (cfg.expiryRenew && st.expiryAt) {
+    $('nextRun').textContent =
+      st.expiryAt > Date.now()
+        ? '约 ' + fmtTime(st.expiryAt) + '（到期检测）'
+        : '已过期，待重新认证';
+  } else {
+    $('nextRun').textContent = '不会自动认证';
+  }
   $('loginAt').textContent = fmtStamp(st.lastLoginAt);
   $('checkAt').textContent = fmtStamp(st.lastCheckAt);
   $('msg').textContent = st.lastResult || '暂无记录';
