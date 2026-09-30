@@ -248,10 +248,26 @@ async function forgetOpenedTab(tabId) {
 }
 /* flow 自己带的 openedByUs 也算数：后台 service worker 重启后内存列表会丢，
  * 而「这一轮是我开的页面」这个事实在 flow 里还留着。 */
-async function isOpenedByUs(tabId, f) {
+/* 「这一页是不是**扩展自己开的**」—— 只认我们主动 `tabs.create` 出来的那一批
+ * （`markOpenedByUs` 记的名单，或 flow 上那个 `openedByUs` 标记）。
+ * ⚠ 与下面 `isOpenedByUs()` 的区别：那条是给**成功**收尾用的，还多认「主人自己导航进的认证页」；
+ *   这条不含那个豁免 —— **失败**收尾要用这一条（见 `finalizeFailure` 里 1.16.10 的注释）。 */
+async function isSpawnedTab(tabId, f) {
   if (!tabId) return false;
   if (f && f.openedByUs === true) return true;
   return (await getOpenedTabs()).includes(tabId);
+}
+
+/* 「收尾时允不允许把这一页收掉」—— **成功**收尾走这条。 */
+async function isOpenedByUs(tabId, f) {
+  if (await isSpawnedTab(tabId, f)) return true;
+  /* 1.16.9：主人**自己导航**进的认证页（`portal-page`）—— 页面不是我们开的，
+   * 但这一轮认证是扩展接手做完的，收尾时就该把这一页收掉。
+   * 主人的原话：「自己进一般都是要验证了，验证完是要关闭的」。
+   * ⚠ 只认 `portal-page` 这一种来路。别的一律不算「我们的页」——
+   * 1.13.0 那次「教务系统页面自己消失」就是放宽了这条判据造成的。 */
+  if (f && f.reason === 'portal-page') return true;
+  return false;
 }
 
 async function note(text) {
@@ -1068,6 +1084,35 @@ async function finalizeFailure(f, note) {
     });
     // 失败不弹系统通知：主人只保留「成功」那一个弹窗
   }
+  /* 1.16.10：**彻底失败**（重试机会用完了）时，把**扩展自己开的**页面收掉。
+   * 主人 2026-09-30 的现场：在线时点弹窗「立即认证」→ 后台开门户页、让页面走
+   * 「我要下线 → 重新认证」，这一轮没成 → 旧版只在**成功**收尾关页，于是那一页白留在标签栏里。
+   *
+   * ⚠ 必须在 `attempts >= maxAttempts` 之后才关 —— 这是本改动最容易做错的地方：
+   *   还在重试的那一轮（`attempts < maxAttempts`，30 秒后重来）**绝不能关**。
+   *   ① 那一页还要用：重试会按门户 origin 找已开的页接着干，尤其「卡在选服务」这种
+   *      只是慢、下一轮接着点就能成的场景；
+   *   ② 更要命的是，页面在流程中途自己消失，正是主人以前投诉过的
+   *      「服务依旧没有选就关闭了」—— 换成失败就关，症状一模一样（用例 17a / 18 钉着这条）。
+   *
+   * ⚠ 还有两条豁免，也别放宽：
+   *   ① **不是我们开的页**一律不碰（用 `isSpawnedTab`，**不是** `isOpenedByUs`）——
+   *      主人自己导航进的认证页（`portal-page`）失败时**必须留着**：他要看失败现场、手动处理；
+   *      而 `isOpenedByUs()` 对 `portal-page` 是放行的，用错就出事。
+   *   ② 来路是 `open-portal`（弹窗「打开认证页」）的也留着 —— 那一页是主人**点名要看**的（1.16.5 定的），
+   *      失败时更该让他看着；收了他只会以为按钮失灵。 */
+  if (attempts >= Number(cfg.maxAttempts || 2)) {
+    try {
+      const spawned = await isSpawnedTab(f && f.tabId, f);
+      if (cfg.closeTabOnSuccess && f && f.tabId && spawned && (f.reason || '') !== 'open-portal') {
+        await sleep(CLOSE_DELAY_MS);
+        await closeTabQuietly(f.tabId);
+        await forgetOpenedTab(f.tabId);
+      }
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
   await updateBadge();
 }
 
@@ -1384,10 +1429,16 @@ async function loginFlow(opts) {
     if (ready.connected) {
       if (!insist) {
         await finalizeSuccess(
-          { tabId, fromTab: false, status: 'skipped' },
+          { tabId, fromTab: false, status: 'skipped', reason: o.reason || '' },
           '门户页面显示已在线，无需认证',
-          /* 「打开认证页」是主人**点名要看这张页面**（弹窗按钮），
-           * 别按「认证成功后关页面」把它收掉 —— 收了他只会以为按钮失灵（1.16.5）。 */
+          /* 「打开认证页」（弹窗按钮）是主人**点名要看这张页面**，
+           * 别按「认证成功后关页面」把它收掉 —— 收了他只会以为按钮失灵（1.16.5）。
+           * ⚠ 1.16.9：`portal-page`（主人自己导航进来的）也留在豁免里 ——
+           * 这条分支说的是「**门户页面显示已在线、什么都没做**」，属于「在线」那一半，
+           * 主人的口径是「在线不关」（2026-09-30 明确）：什么都没做就把他的页面收掉，
+           * 他就没法在门户里查流量、点「我要下线」了。
+           * 1.16.9 真正要关的是**真跑完一轮认证**的自己进的页 —— 那条走 FILL_RESULT，
+           * 由 `isOpenedByUs()` 认 `reason === 'portal-page'`（见那里）。 */
           { idle: true, keepTab: isOpenPortal }
         );
         return await getState();
@@ -1434,6 +1485,9 @@ async function loginFlow(opts) {
     tabId,
     fromTab: !!o.tabId,
     openedByUs: !o.tabId, // 1.13.0：没传 tabId 说明这一页是后台自己新建的，收尾时允许关掉
+    /* 1.16.9：把**来路**带上 —— 收尾时「这一页到底要不要关」按来路分，
+     * 光看 openedByUs 分不出「主人自己导航进来的认证页」（见 isOpenedByUs）。 */
+    reason: o.reason || '',
     status: 'running',
     note: '',
     attempts,
@@ -1905,6 +1959,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         startedAt: Date.now(),
         tabId,
         fromTab: false,
+        /* ⚠ 1.16.9：能走到这里，说明**后台压根没有这一轮的 flow 记录** ——
+         * 也就是这个页面不是我们开的，是主人**自己导航进来的认证页**，
+         * 页面脚本抢跑把整轮做完了。标成 `portal-page` 有两层用处：
+         *   ① `isOpenedByUs()` 认它 —— 收尾时允许把这一页收掉
+         *      （主人的原话：「自己进一般都是要验证了，验证完是要关闭的」）；
+         *   ② 它本来就属于「永不下线」的那条路，语义一致。
+         * 主人开的**普通页面**走不到这里：能跑起来说明早过了 hostAllowed 那道门。 */
+        reason: 'portal-page',
         status: 'running',
         note: '',
         attempts: Number.isFinite(r.submitted) ? Math.max(1, r.submitted) : 1,
