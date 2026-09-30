@@ -363,7 +363,12 @@
     { name: '中国移动', keys: ['中国移动', '移动', 'cmcc'] },
     { name: '中国联通', keys: ['中国联通', '联通', 'unicom'] }
   ];
-  const DIALOG_HINT_RE = /请选择服务|选择服务|选择网络|选择运营商|选择身份|运营商|身份|认证方式|select\.a\.service/;
+  /* ⚠ 1.16.8：这里原来有**裸词**「运营商」和「身份」—— 单蹦一个「运营商」在任何介绍文字里
+   * 都可能出现。主人的 GitHub 仓库描述写的正是「…自动填账号密码、选运营商、提交…」，
+   * 而这句还是本扩展自己的简介；个人主页 / 仓库列表页把描述渲染成正文，
+   * body.innerText 一读就命中「运营商」→ 整站被当成服务选择页 → 自启动 → 弹通知。
+   * 判据必须是**完整短语**，绝不能用裸词单挑。 */
+  const DIALOG_HINT_RE = /请选择服务|选择服务|服务选择|选择网络|选择运营商|选择身份|认证方式|select\.a\.service/;
   const PICKED_CLASS_RE = /(^|[\s-])(active|selected|checked|current|chosen|is-checked|is-selected|on)([\s-]|$)/i;
 
   const escSel = (s) => {
@@ -570,10 +575,40 @@
    */
   const SERVICE_URL_RE = /serviceSelection|selectService|service[-_]?select|chooseService|select[-_]?identity/i;
 
+  /* 「已经发现过的门户 origin」缓存 —— 给 hostLooksLikeCampusNet() 用。
+   * 由 loadCtx() 每次读配置时顺手填。学校把门户挂在非 edu.cn 域名上时靠它认。 */
+  let portalHostCache = [];
+
   function servicePageUrl(u) {
     try {
       const s = u || location.pathname + location.search + location.hash;
       return SERVICE_URL_RE.test(String(s));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /* 「服务选择页只可能长在校园网门户上」—— 1.16.8 之前这句话**只写在注释里**，
+   * 判据本身压根不看域名，只读整页文字。于是任何一页，只要正文里出现那些词就算数：
+   * 主人的 GitHub 仓库描述里写着「自动填账号密码、选运营商」，个人主页一加载，
+   * github.com 就被当成服务选择页 → 页面自启动 → 认证成功 → 弹「校园网已连接」通知，
+   * 而这一切跟定时 / 到期毫无关系（所以「没到时间也弹」）。
+   *
+   * 这条只做**域名**判断，不参与 hostAllowed 那套同源比较，所以不会循环依赖。 */
+  function hostLooksLikeCampusNet() {
+    try {
+      const h = location.hostname;
+      if (!h) return false;
+      if (PRIVATE_HOST_RE.test(h)) return true; // 网关页：内网 IP
+      if (EDU_HOST_RE.test(h)) return true;     // 教育网域名
+      for (const u of portalHostCache) {
+        try {
+          if (new URL(u).hostname === h) return true;
+        } catch (e) {
+          /* 继续看下一个 */
+        }
+      }
+      return false;
     } catch (e) {
       return false;
     }
@@ -588,7 +623,12 @@
        *  functionType = selectService）。不先排掉，这一页就会被当成服务选择页：
        * 脚本转头去等服务选项，而页面上根本没有选项 —— 表现又是「停在页面上不动」。 */
       if (onlineSuccessNode() || offlineSuccessNode()) return false;
+      /* ① 地址里就写着 serviceSelection / selectService —— 这条最可信：
+       *    它认的是**路径**而不是页面文字，普通网站不会有这种路径，所以不看宿主。 */
       if (servicePageUrl()) return true;
+      /* ② ③ 文本 / 候选人结构 —— 误伤面大（一句话里带个「运营商」就能命中），
+       *    1.16.8 起**必须宿主先像校园网门户**才允许往下判。 */
+      if (!hostLooksLikeCampusNet()) return false;
       if (DIALOG_HINT_RE.test(pageText())) return true;
       const all = allOperatorCandidates();
       return all.length > 0 && all.some(candidateVisible);
@@ -1781,7 +1821,15 @@
   async function loadCtx() {
     try {
       const box = await chrome.storage.local.get(['config', 'state']);
-      return { cfg: box.config || {}, st: box.state || {} };
+      const cfg = box.config || {};
+      const st = box.state || {};
+      /* 顺手把「已知门户 origin」灌进缓存 —— hostLooksLikeCampusNet() 靠它认那些
+       * 没挂在 edu.cn 上的门户。这里是最早也最全的一处（设置里填的 + 后台发现到的），
+       * 而 hostAllowed() 的两个调用点都在 loadCtx() 之后，所以时序是安全的。 */
+      portalHostCache = [cfg.portalUrl, cfg.portalCandidate, st.portalCandidate]
+        .concat(st.portalHosts || [])
+        .filter((u) => typeof u === 'string' && u);
+      return { cfg, st };
     } catch (e) {
       return { cfg: {}, st: {} };
     }
@@ -1850,7 +1898,15 @@
        * 下面的文本特征判定认不出来，就把这一页挡在门外；被挡在门外的表现正是
        * 「停在选择服务页、扩展一声不吭、界面不动」。
        * 而这一页既然已经出现在 http(s) 里，就不可能是一般的邮箱/银行页面（它们不会有服务选择视图）。 */
-      if (document.querySelector('app-service-selection, app-serviceSelection, [class*="service-selection"], #relationInfo')) {
+      /* app-service-selection / app-serviceSelection 是门户的 Angular 组件标签、
+       * #relationInfo 是门户专属 id —— 这三样足够特异，普通网站长不出来，直接放行。
+       * ⚠ 1.16.8：`[class*="service-selection"]` 原本跟它们并在一起**无条件放行**，
+       * 但那是个**通用 class 名** —— 任何网站都可能给自己的某一块起这个名字，
+       * 一起放行等于把下面所有域名判据全绕过去了。它现在跟文本判据一样要先过宿主门。 */
+      if (document.querySelector('app-service-selection, app-serviceSelection, #relationInfo')) {
+        return true;
+      }
+      if (document.querySelector('[class*="service-selection"]') && hostLooksLikeCampusNet()) {
         return true;
       }
       if (isServiceSelectionPage()) return true;
