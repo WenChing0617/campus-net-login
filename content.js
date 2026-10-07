@@ -1191,6 +1191,117 @@
     return findClickable(['确定', '确认', '是', 'ok'], { enabledOnly: true });
   }
 
+  /* ================= 门户自己的「公告 / 提示」弹窗（1.16.11） =================
+   *
+   * 现场（主人 2026-10-07）：「认证页会有一个通知，需要点击确认后才能选运营商」——
+   * 服务选择页上先弹一个**系统公告**，不点掉它，运营商列表就一直被盖着。
+   *
+   * 门户前端是怎么做的（从门户 chunk 7243 里抠出来的，见 tools/portal-structure.md）：
+   *   · 右下角常驻一个小条 `.notify-message`
+   *     `{ position:absolute; bottom:80px; right:10px; z-index:999; cursor:pointer }`，
+   *     文案取后台配置 `noticeConfig.entranceNameZh`（默认就是「公告」）；
+   *   · 学校只要在后台把 `noticeConfig.defaultOpenNotice` 打开，**页面一渲染它就自动弹**一个
+   *     `nz-modal`（宽 580px、`nzMaskClosable:false`、`nzFooter:null`），
+   *     内容区 `.content.ql-editor`，底部一个 `<button class="button-6">`，
+   *     文字 = i18n `ok` = **「确定」**；
+   *   · 登录页上还可能弹一个 `NzModalService.alert` 的「终端威胁」提示
+   *     （标题 = i18n `Return.cn.Tips` = 「提示」，按钮写死 **「确认」**）。
+   *
+   * ⚠ 这一段的**唯一原则：只认「浮在页面上方的模态 / 抽屉」里的按钮**，绝不碰正文里的。
+   *   服务选择页正文里也有一个长得一模一样的 `<button class="button-6">确定</button>`
+   *   （提交运营商用的）—— 所以判据必须是「容器在不在浮层里」，不是「按钮叫什么」。
+   *
+   * ⚠ 第二条：**「认证失败」提示框不归这里管**。它同样是 nz-modal，但主循环要读它的文字
+   *   （判「账号已在线」、判还要不要重试）—— 这里点掉就把信号吃掉了。
+   *
+   * ⚠ 第三条：**别把「服务选择」自己关掉**。有的门户把运营商列表放在 modal 里，
+   *   那边浮层里只要还露着可见的运营商选项，就一律不碰。 */
+  const DIALOG_BOX_SEL =
+    '.ant-modal-wrap, .ant-modal, nz-modal-container, .ant-drawer, .ant-drawer-content-wrapper';
+  const DIALOG_ACK_RE = /^(确定|确\s*定|确认|我知道了|知道了|我已知晓|好的|关闭|继续|ok|i know|yes)$/i;
+  const DIALOG_BAD_RE = /取消|返回|重新登录|重新入网|重新认证|再次|cancel|back|reconnect/i;
+
+  /* 页面上有没有一个「挡路的门户弹窗」；有就把那个用于关掉它的按钮交出来。
+   * 返回 null = 没有。 */
+  function dialogAckButton() {
+    try {
+      const boxes = document.querySelectorAll(DIALOG_BOX_SEL);
+      for (const box of boxes) {
+        if (!isVisible(box)) continue;
+        /* 这个浮层里装着「服务选择」本身 → 那是正事，不是公告，别动它 */
+        let owns = false;
+        try {
+          owns = allOperatorCandidates().some((c) => candidateVisible(c) && box.contains(c.el));
+        } catch (e) {
+          owns = false;
+        }
+        if (owns) continue;
+        /* 「认证失败 / 账号已在线」提示留给主循环自己处理，别抢它的信号 */
+        const body = ownText(box, 400);
+        if (FAIL_RE.test(body) || ALREADY_ONLINE_RE.test(body)) continue;
+        let btns = [];
+        try {
+          btns = Array.from(box.querySelectorAll('button, a, [role=button], .ant-btn, .el-button, .btn'));
+        } catch (e) {
+          btns = [];
+        }
+        for (const el of btns) {
+          if (!isVisible(el) || isDisabled(el)) continue;
+          const t = norm(textOf(el));
+          if (!t || DIALOG_BAD_RE.test(t)) continue;
+          if (DIALOG_ACK_RE.test(t)) return el;
+        }
+        /* 退一步：右上角的 ×（门户公告 `nzClosable:true`，点它也关得掉） */
+        try {
+          const x = box.querySelector('.ant-modal-close, .ant-drawer-close, [aria-label="Close"]');
+          if (x && isVisible(x)) return x;
+        } catch (e) {
+          /* 忽略 */
+        }
+      }
+    } catch (e) {
+      /* 忽略 */
+    }
+    return null;
+  }
+
+  /* 点掉挡路的门户弹窗（最多 max 个）。没弹窗时开销只是一次 querySelectorAll，可以随便调。
+   * ⚠ 只在校园网门户页上动手（宿主门）—— 别的站上绝不点人家弹窗里的「确定」。 */
+  async function dismissPortalDialogs(max) {
+    if (!hostLooksLikeCampusNet()) return 0;
+    let n = 0;
+    for (let i = 0; i < (max || 2); i += 1) {
+      const btn = dialogAckButton();
+      if (!btn) break;
+      clickLike(btn);
+      n += 1;
+      await sleep(200);
+    }
+    return n;
+  }
+
+  /* 边等边清障：轮询 fn()，期间只要冒出门户公告/提示弹窗就点掉。
+   * 和 waitUntil 只差一条 —— 它在等待期间**顺手关掉挡路的浮层**。
+   * 为什么非这样不可：门户的公告是**异步拉的**（先 `getNotifyConf`，有内容才弹），
+   * 往往比页面正文晚一两秒 —— 只在开头清一次会正好错过去。
+   * ⚠ 只用于「等页面自己走到下一步」（等服务选择、等认证结果）；
+   *   等「下线确认」那种**我们自己点出来的**浮层时绝不能用它。 */
+  async function waitClear(fn, timeoutMs, stepMs) {
+    const end = Date.now() + timeoutMs;
+    for (;;) {
+      const v = fn();
+      if (v) return v;
+      if (Date.now() >= end) return fn();
+      const ack = dialogAckButton();
+      if (ack) {
+        clickLike(ack);
+        await sleep(180);
+        continue;
+      }
+      await sleep(stepMs);
+    }
+  }
+
   /* 页面是否「明确」已在线的状态。门槛故意设得很高：
    *   · 还有密码框                       → 没登录（认证页本来就该有密码框）
    *   · 服务选择弹窗还在 / 「确定」还在   → 流程没走完，绝不能算成功
@@ -1603,7 +1714,7 @@
     if (enterAtService) {
       // 服务选择独立页：等选项渲染出来（SPA 常常跳到这一页后才去拉服务列表）
       progress('已进入服务选择页，自动选中「' + operator + '」…', 3);
-      const s = await waitUntil(
+      const s = await waitClear(
         () => {
           const sd = serviceDialog();
           if (sd) return { svc: sd };
@@ -1626,6 +1737,9 @@
         dlg = { svc: { all: [], names: [] } };
       }
     } else {
+      // 0) 认证页上可能已经挂着一个门户公告 / 「提示」浮层（后台开了「默认弹出公告」），
+      //    先把挡路的点掉 —— 盖着页面时，找按钮 / 找输入框都可能被带偏。
+      await dismissPortalDialogs(2);
       // 1) 填账号密码
       const passEl = findPassword(p.selectors && p.selectors.password);
       const userEl = findUsername(p.selectors && p.selectors.username);
@@ -1637,7 +1751,7 @@
       log.push('已填写账号密码');
 
       // 登录按钮常因框架校验而初始禁用：轮询等它变为可用（一般几十毫秒）
-      const loginBtn = await waitUntil(
+      const loginBtn = await waitClear(
         () => findClickable(LOGIN_WORDS, { enabledOnly: true }) || findClickable(['登录'], { enabledOnly: true }),
         budget(W_BUTTON),
         STEP
@@ -1659,7 +1773,7 @@
 
       // 2) 等「服务选择」——可能是同一页弹出的弹窗，也可能是整页跳转过去的新页面
       //    （后者会把本页脚本销毁，接手的是新页面里的脚本自己）
-      dlg = await waitUntil(
+      dlg = await waitClear(
         () => {
           const d = failureDialog();
           if (d) return { fail: d };
@@ -1685,6 +1799,8 @@
 
     // 3) 选服务商 → 确定 → 看结果；失败就「我知道了 → 重新选服务 → 再点确定」
     for (let round = 1; round <= MAX_RETRY + 1 && Date.now() < deadline; round += 1) {
+      // 每一轮开工前先清一次挡路的浮层：公告是异步拉的，可能正好在上一轮结束时弹出来
+      await dismissPortalDialogs(1);
       // 3a) 上一轮是失败提示：点「我知道了」，然后直接再点「确定」
       if (dlg && dlg.fail) {
         const d = dlg.fail;
@@ -1742,7 +1858,7 @@
       progress('已选择「' + operator + '」并提交（第 ' + confirmed + ' 次），等待认证结果…', 3);
 
       // 3d) 等结果：失败提示 / 成功标识 / 跳转到最终界面
-      dlg = await waitUntil(
+      dlg = await waitClear(
         () => {
           const d = failureDialog();
           if (d) return { fail: d };
@@ -2068,6 +2184,12 @@
           : role === 'offline'
             ? '检测到已下线页面，正在返回认证页…'
             : '检测到认证页，页面内立即自动填写…';
+
+    /* 页面上如果已经挂着门户公告 / 「提示」浮层，先点掉再开工 ——
+     * 学校后台把 noticeConfig.defaultOpenNotice 打开后，服务选择页一渲染它就自动弹，
+     * 把整个运营商列表盖住（主人 2026-10-07 报的正是这个）。
+     * 这里是「已经弹出来」的那一半；晚一两秒才弹的那一半，交给 runFlow 里的 waitClear()。 */
+    await dismissPortalDialogs(2);
 
     flowRunning = true;
     report({ result: { ok: true, status: 'running', note, by: 'page' } });
